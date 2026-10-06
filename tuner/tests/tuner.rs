@@ -1,7 +1,8 @@
 use std::fs;
 use std::process::Command;
 
-use dumbfish::eval::{FEATURES, parse_weights};
+use dumbfish::eval::{FEATURE_NAMES, evaluate_with, parse_weights};
+use dumbfish_core::Board;
 
 fn tune(name: &str, dataset: &str, weights: &str, epochs: &str) -> (bool, String, String) {
     let dir = format!("{}/{name}", env!("CARGO_TARGET_TMPDIR"));
@@ -22,7 +23,7 @@ fn tune(name: &str, dataset: &str, weights: &str, epochs: &str) -> (bool, String
 }
 
 fn index(name: &str) -> usize {
-    FEATURES.iter().position(|f| f.name == name).unwrap()
+    FEATURE_NAMES.iter().position(|n| n == name).unwrap()
 }
 
 #[test]
@@ -49,10 +50,10 @@ fn learns_relative_piece_values() {
     assert!(ok, "{log}");
 
     let tuned = parse_weights(&weights).unwrap();
-    let (pawn, knight) = (tuned[index("pawn")], tuned[index("knight")]);
+    let score = |fen: &str| evaluate_with(&Board::from_fen(fen).unwrap(), &tuned);
     assert!(
-        knight[2] < pawn[2],
-        "a lone knight wins less often than a pawn: {weights}"
+        score(knight_up) < score(pawn_up),
+        "a lone knight wins less often than a pawn"
     );
     let untouched =
         parse_weights(include_str!("../../engine/weights.txt")).unwrap()[index("queen")];

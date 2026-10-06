@@ -1,5 +1,6 @@
 use dumbfish::eval::{
-    FEATURES, MAX_PHASE, blend, evaluate, explain, format_weights, parse_weights, phase,
+    FEATURE_COUNT, FEATURE_NAMES, MAX_PHASE, blend, evaluate, evaluate_with, explain,
+    for_each_feature, format_weights, parse_weights, phase,
 };
 use dumbfish_core::Board;
 
@@ -48,15 +49,21 @@ fn shipped_weights_are_canonical() {
 }
 
 #[test]
-fn shipped_weights_parse() {
-    assert_eq!(
-        parse_weights(include_str!("../weights.txt")).unwrap().len(),
-        FEATURES.len()
-    );
+fn feature_names_are_unique() {
+    assert_eq!(FEATURE_NAMES.len(), FEATURE_COUNT);
+    let mut names = FEATURE_NAMES.clone();
+    names.sort();
+    names.dedup();
+    assert_eq!(names.len(), FEATURE_COUNT);
+    assert_eq!(FEATURE_NAMES[5], "pawn_a1");
+    assert_eq!(FEATURE_NAMES[FEATURE_COUNT - 1], "king_h8");
 }
 
 #[test]
 fn symmetric_for_both_colors() {
+    let weights = (0..FEATURE_COUNT as i32)
+        .map(|i| [i, 2 * i, i % 7])
+        .collect();
     for fen in POSITIONS {
         let mirrored = mirror(fen);
         let (a, b) = (
@@ -64,25 +71,37 @@ fn symmetric_for_both_colors() {
             Board::from_fen(&mirrored).unwrap(),
         );
         assert_eq!(evaluate(&a), evaluate(&b), "{fen} vs {mirrored}");
+        assert_eq!(
+            evaluate_with(&a, &weights),
+            evaluate_with(&b, &weights),
+            "{fen} vs {mirrored} with arbitrary weights"
+        );
     }
     assert_eq!(evaluate(&Board::startpos()), 0);
 }
 
 #[test]
-fn material() {
-    let white_queen = Board::from_fen("4k3/8/8/8/8/8/8/3QK3 w - - 0 1").unwrap();
-    let expected = queen_alone();
-    assert_eq!(evaluate(&white_queen), expected);
-    let black_to_move = Board::from_fen("4k3/8/8/8/8/8/8/3QK3 b - - 0 1").unwrap();
-    assert_eq!(evaluate(&black_to_move), -expected);
+fn side_to_move_negates() {
+    let white = Board::from_fen("4k3/8/8/8/8/8/8/3QK3 w - - 0 1").unwrap();
+    let black = Board::from_fen("4k3/8/8/8/8/8/8/3QK3 b - - 0 1").unwrap();
+    assert!(evaluate(&white) > 0);
+    assert_eq!(evaluate(&black), -evaluate(&white));
 }
 
-/// Shipped queen weights blended for a lone queen: phase 4, so 8/24 middlegame and 16/24 endgame.
-fn queen_alone() -> i32 {
-    let weights = parse_weights(include_str!("../weights.txt")).unwrap();
-    let [_, middlegame, endgame] =
-        weights[FEATURES.iter().position(|f| f.name == "queen").unwrap()];
-    (8 * middlegame + 16 * endgame) / MAX_PHASE
+#[test]
+fn features_of_a_position() {
+    let board = Board::from_fen("4k3/8/8/8/8/8/8/3QK3 b - - 0 1").unwrap();
+    let mut values = vec![0; FEATURE_COUNT];
+    for_each_feature(&board, |index, value| values[index] += value);
+    let active: Vec<_> = (0..FEATURE_COUNT)
+        .filter(|&i| values[i] != 0)
+        .map(|i| (FEATURE_NAMES[i].as_str(), values[i]))
+        .collect();
+    assert_eq!(
+        active,
+        [("queen", 1), ("queen_d1", 1)],
+        "the kings on e1 and e8 cancel out"
+    );
 }
 
 #[test]
@@ -111,7 +130,11 @@ fn phase_and_blend() {
 
 #[test]
 fn weights_format() {
-    let all = "pawn 1 2 3\nknight 1 2 3\nbishop 1 2 3\nrook 1 2 3\nqueen 1 2 3\n";
+    let all: String = FEATURE_NAMES
+        .iter()
+        .map(|n| format!("{n} 1 2 3\n"))
+        .collect();
+    let all = all.as_str();
     assert_eq!(parse_weights(all).unwrap()[0], [1, 2, 3]);
     assert!(parse_weights(&format!("# header\n\n  {all}")).is_ok());
 
@@ -128,29 +151,31 @@ fn weights_format() {
 }
 
 #[test]
-fn explain_lists_every_feature() {
+fn explain_lists_non_zero_features() {
     let board = Board::from_fen("4k3/8/8/8/8/8/8/3QK3 b - - 0 1").unwrap();
     let text = explain(&board);
     let lines: Vec<_> = text.lines().collect();
-    assert_eq!(lines.len(), FEATURES.len() + 3, "{text}");
-    for (feature, line) in FEATURES.iter().zip(&lines[1..]) {
-        assert!(line.starts_with(feature.name), "{line:?}");
-    }
+    let names: Vec<_> = lines[1..lines.len() - 2]
+        .iter()
+        .map(|l| l.split_whitespace().next().unwrap())
+        .collect();
+    assert_eq!(names, ["queen", "queen_d1"], "{text}");
+
     let weights = parse_weights(include_str!("../weights.txt")).unwrap();
-    let queen = FEATURES.iter().position(|f| f.name == "queen").unwrap();
+    let queen = FEATURE_NAMES.iter().position(|n| n == "queen").unwrap();
     let [opening, middlegame, endgame] = weights[queen].map(|w| w.to_string());
-    let queen: Vec<_> = lines[5].split_whitespace().collect();
-    assert_eq!(queen[..5], ["queen", "1", &opening, &middlegame, &endgame]);
+    let row: Vec<_> = lines[1].split_whitespace().collect();
+    assert_eq!(row[..5], ["queen", "1", &opening, &middlegame, &endgame]);
     assert_eq!(
-        lines[6],
+        lines[lines.len() - 2],
         "phase 4/24: opening 0/24, middlegame 8/24, endgame 16/24"
     );
+    let stm = evaluate(&board);
     assert_eq!(
-        lines[7],
+        lines[lines.len() - 1],
         format!(
-            "total: {} cp for white, {} cp for the side to move",
-            queen_alone(),
-            -queen_alone()
+            "total: {} cp for white, {stm} cp for the side to move",
+            -stm
         )
     );
 }

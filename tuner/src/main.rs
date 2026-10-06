@@ -1,7 +1,7 @@
 use std::process::ExitCode;
 use std::{env, fs};
 
-use dumbfish::eval::{FEATURES, MAX_PHASE, blend, format_weights, parse_weights, phase};
+use dumbfish::eval::{MAX_PHASE, blend, for_each_feature, format_weights, parse_weights, phase};
 use dumbfish_core::Board;
 
 const USAGE: &str = "usage: dumbfish-tuner <dataset.epd> <weights.txt> [epochs]
@@ -62,7 +62,7 @@ struct Dataset {
     /// Shares of the opening, middlegame and endgame weights, summing to 1.
     blends: Vec<[f64; 3]>,
     offsets: Vec<usize>,
-    /// `(feature index, value)` pairs with non-zero values.
+    /// `(feature index, value)` pairs; an index may repeat.
     features: Vec<(usize, f64)>,
 }
 
@@ -90,12 +90,9 @@ impl Dataset {
             data.results.push(result);
             data.blends
                 .push(blend(phase(&board)).map(|b| f64::from(b) / f64::from(MAX_PHASE)));
-            for (index, feature) in FEATURES.iter().enumerate() {
-                let value = (feature.value)(&board);
-                if value != 0 {
-                    data.features.push((index, f64::from(value)));
-                }
-            }
+            for_each_feature(&board, |index, value| {
+                data.features.push((index, f64::from(value)))
+            });
             data.offsets.push(data.features.len());
         }
         Ok(data)
