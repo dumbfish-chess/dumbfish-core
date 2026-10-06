@@ -71,9 +71,18 @@ fn symmetric_for_both_colors() {
 #[test]
 fn material() {
     let white_queen = Board::from_fen("4k3/8/8/8/8/8/8/3QK3 w - - 0 1").unwrap();
-    assert_eq!(evaluate(&white_queen), 900);
+    let expected = queen_alone();
+    assert_eq!(evaluate(&white_queen), expected);
     let black_to_move = Board::from_fen("4k3/8/8/8/8/8/8/3QK3 b - - 0 1").unwrap();
-    assert_eq!(evaluate(&black_to_move), -900);
+    assert_eq!(evaluate(&black_to_move), -expected);
+}
+
+/// Shipped queen weights blended for a lone queen: phase 4, so 8/24 middlegame and 16/24 endgame.
+fn queen_alone() -> i32 {
+    let weights = parse_weights(include_str!("../weights.txt")).unwrap();
+    let [_, middlegame, endgame] =
+        weights[FEATURES.iter().position(|f| f.name == "queen").unwrap()];
+    (8 * middlegame + 16 * endgame) / MAX_PHASE
 }
 
 #[test]
@@ -127,14 +136,21 @@ fn explain_lists_every_feature() {
     for (feature, line) in FEATURES.iter().zip(&lines[1..]) {
         assert!(line.starts_with(feature.name), "{line:?}");
     }
+    let weights = parse_weights(include_str!("../weights.txt")).unwrap();
+    let queen = FEATURES.iter().position(|f| f.name == "queen").unwrap();
+    let [opening, middlegame, endgame] = weights[queen].map(|w| w.to_string());
     let queen: Vec<_> = lines[5].split_whitespace().collect();
-    assert_eq!(queen, ["queen", "1", "900", "900", "900", "900.00"]);
+    assert_eq!(queen[..5], ["queen", "1", &opening, &middlegame, &endgame]);
     assert_eq!(
         lines[6],
         "phase 4/24: opening 0/24, middlegame 8/24, endgame 16/24"
     );
     assert_eq!(
         lines[7],
-        "total: 900 cp for white, -900 cp for the side to move"
+        format!(
+            "total: {} cp for white, {} cp for the side to move",
+            queen_alone(),
+            -queen_alone()
+        )
     );
 }

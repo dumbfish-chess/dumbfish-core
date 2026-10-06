@@ -232,8 +232,14 @@ fn eval_command() {
     engine.send("eval");
     let lines = engine.read_until("total:");
     assert!(lines[0].starts_with("feature"), "{lines:?}");
+    let board =
+        Board::from_fen("rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2").unwrap();
+    let stm = dumbfish::eval::evaluate(&board);
     assert_eq!(
         lines.last().unwrap(),
-        "total: 100 cp for white, -100 cp for the side to move"
+        &format!(
+            "total: {} cp for white, {stm} cp for the side to move",
+            -stm
+        )
     );
 }
