@@ -2,7 +2,7 @@ use dumbfish::eval::{
     FEATURE_COUNT, FEATURE_NAMES, MAX_PHASE, blend, evaluate, evaluate_with, explain,
     for_each_feature, format_weights, parse_weights, phase,
 };
-use dumbfish_core::Board;
+use dumbfish_core::{Board, Color, Piece, PieceKind, Square};
 
 const POSITIONS: [&str; 9] = [
     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
@@ -56,7 +56,8 @@ fn feature_names_are_unique() {
     names.dedup();
     assert_eq!(names.len(), FEATURE_COUNT);
     assert_eq!(FEATURE_NAMES[5], "pawn_a1");
-    assert_eq!(FEATURE_NAMES[FEATURE_COUNT - 1], "king_h8");
+    assert_eq!(FEATURE_NAMES[5 + 6 * 64 - 1], "king_h8");
+    assert_eq!(FEATURE_NAMES[FEATURE_COUNT - 1], "passed_7");
 }
 
 #[test]
@@ -178,4 +179,115 @@ fn explain_lists_non_zero_features() {
             -stm
         )
     );
+}
+
+/// Pawn structure features recomputed square by square, from each side's own point of view.
+fn reference_pawn_structure(board: &Board) -> Vec<(String, i32)> {
+    let mut values = std::collections::BTreeMap::<String, i32>::new();
+    for (color, sign) in [(Color::White, 1), (Color::Black, -1)] {
+        let pawns_of = |c: Color| -> Vec<(i32, i32)> {
+            Square::ALL
+                .into_iter()
+                .filter(|&sq| board.piece_on(sq) == Some(Piece::new(c, PieceKind::Pawn)))
+                .map(|sq| {
+                    let rank = sq.rank() as i32;
+                    (
+                        sq.file() as i32,
+                        if c == Color::White { rank } else { 7 - rank },
+                    )
+                })
+                .collect()
+        };
+        let (ours, theirs) = (pawns_of(color), pawns_of(!color));
+        let theirs: Vec<_> = theirs.into_iter().map(|(f, r)| (f, 7 - r)).collect();
+        for &(file, rank) in &ours {
+            let mut add = |name: String| *values.entry(name).or_default() += sign;
+            let doubled = ours.iter().any(|&(f, r)| f == file && r > rank);
+            let isolated = !ours.iter().any(|&(f, _)| (f - file).abs() == 1);
+            let supported = ours
+                .iter()
+                .any(|&(f, r)| (f - file).abs() == 1 && r <= rank);
+            let stop_attacked = theirs
+                .iter()
+                .any(|&(f, r)| (f - file).abs() == 1 && r == rank + 2);
+            let blocked = theirs
+                .iter()
+                .any(|&(f, r)| (f - file).abs() <= 1 && r > rank);
+            if doubled {
+                add("doubled".into());
+            }
+            if isolated {
+                add("isolated".into());
+            } else if !supported && stop_attacked {
+                add("backward".into());
+            }
+            if !doubled && !blocked {
+                add(format!("passed_{}", rank + 1));
+            }
+        }
+    }
+    values.into_iter().filter(|&(_, v)| v != 0).collect()
+}
+
+fn pawn_structure(board: &Board) -> Vec<(String, i32)> {
+    let mut values = vec![0; FEATURE_COUNT];
+    for_each_feature(board, |index, value| values[index] += value);
+    let pawn_features = ["doubled", "isolated", "backward"];
+    let mut found: Vec<_> = (0..FEATURE_COUNT)
+        .filter(|&i| values[i] != 0)
+        .map(|i| (FEATURE_NAMES[i].clone(), values[i]))
+        .filter(|(name, _)| pawn_features.contains(&name.as_str()) || name.starts_with("passed_"))
+        .collect();
+    found.sort();
+    found
+}
+
+#[test]
+fn pawn_structure_examples() {
+    let features = |fen| pawn_structure(&Board::from_fen(fen).unwrap());
+    let named = |pairs: &[(&str, i32)]| -> Vec<(String, i32)> {
+        pairs.iter().map(|&(n, v)| (n.to_string(), v)).collect()
+    };
+    assert_eq!(
+        features("4k3/8/8/8/8/P7/P7/4K3 w - - 0 1"),
+        named(&[("doubled", 1), ("isolated", 2), ("passed_3", 1)]),
+        "a2 behind a3: doubled, both isolated, only a3 passed"
+    );
+    assert_eq!(
+        features("4k3/8/8/4p3/2P5/3P4/8/4K3 w - - 0 1"),
+        named(&[("backward", 1), ("isolated", -1), ("passed_4", 1)]),
+        "d3 is backward: c4 is ahead and e5 controls d4; e5 is isolated and stopped by d3"
+    );
+    assert_eq!(features(dumbfish_core::board::STARTPOS), named(&[]));
+}
+
+#[test]
+fn pawn_structure_matches_reference() {
+    // xorshift64*
+    let mut state = 0xDEAD_BEEF_u64;
+    let mut next = move || {
+        state ^= state >> 12;
+        state ^= state << 25;
+        state ^= state >> 27;
+        state.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    };
+    let mut checked = 0;
+    for fen in POSITIONS {
+        let mut board = Board::from_fen(fen).unwrap();
+        for _ in 0..120 {
+            assert_eq!(
+                pawn_structure(&board),
+                reference_pawn_structure(&board),
+                "{}",
+                board.fen()
+            );
+            checked += 1;
+            let moves = board.legal_moves();
+            if moves.is_empty() {
+                break;
+            }
+            board.make_move(moves[next() as usize % moves.len()]);
+        }
+    }
+    assert!(checked > 500, "{checked}");
 }

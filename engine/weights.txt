@@ -388,3 +388,12 @@ king_e8       -1326          66      -26
 king_f8         868          65      -16
 king_g8        1222          50      -17
 king_h8        1969          34      -44
+doubled           0           0        0
+isolated          0           0        0
+backward          0           0        0
+passed_2          0           0        0
+passed_3          0           0        0
+passed_4          0           0        0
+passed_5          0           0        0
+passed_6          0           0        0
+passed_7          0           0        0

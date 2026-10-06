@@ -5,12 +5,17 @@
 //! Features, from white's point of view:
 //! - `pawn` .. `queen`: piece count difference;
 //! - `<piece>_<square>` (piece-square tables): +1 for a white piece on the square, -1 for a
-//!   black piece on the square mirrored vertically.
+//!   black piece on the square mirrored vertically;
+//! - pawn structure, counted per pawn: `doubled` (an own pawn ahead on the file), `isolated`
+//!   (no own pawns on the adjacent files), `backward` (not isolated, every own pawn on the
+//!   adjacent files is ahead, and an enemy pawn attacks the square in front), `passed_<rank>`
+//!   (no enemy pawns ahead on the file or the adjacent files and no own pawn ahead on the file;
+//!   the rank is counted from the pawn's own side, 2 ..= 7).
 
 use std::fmt::Write as _;
 use std::sync::LazyLock;
 
-use dumbfish_core::{Board, Color, PieceKind, Square};
+use dumbfish_core::{Bitboard, Board, Color, PieceKind, Square, attacks};
 
 /// Phase of a position with all pieces: knights and bishops count 1, rooks 2, queens 4.
 pub const MAX_PHASE: i32 = 24;
@@ -18,7 +23,12 @@ pub const MAX_PHASE: i32 = 24;
 const PIECE_NAMES: [&str; 6] = ["pawn", "knight", "bishop", "rook", "queen", "king"];
 const MATERIAL: usize = 0;
 const PIECE_SQUARE: usize = MATERIAL + 5;
-pub const FEATURE_COUNT: usize = PIECE_SQUARE + 6 * 64;
+const DOUBLED: usize = PIECE_SQUARE + 6 * 64;
+const ISOLATED: usize = DOUBLED + 1;
+const BACKWARD: usize = ISOLATED + 1;
+/// `passed_2` ..= `passed_7`.
+const PASSED: usize = BACKWARD + 1;
+pub const FEATURE_COUNT: usize = PASSED + 6;
 
 /// Feature names by index.
 pub static FEATURE_NAMES: LazyLock<Vec<String>> = LazyLock::new(|| {
@@ -26,6 +36,8 @@ pub static FEATURE_NAMES: LazyLock<Vec<String>> = LazyLock::new(|| {
     for piece in PIECE_NAMES {
         names.extend(Square::ALL.iter().map(|sq| format!("{piece}_{sq}")));
     }
+    names.extend(["doubled", "isolated", "backward"].map(String::from));
+    names.extend((2..=7).map(|rank| format!("passed_{rank}")));
     names
 });
 
@@ -47,6 +59,45 @@ pub fn for_each_feature(board: &Board, mut f: impl FnMut(usize, i32)) {
                     sign,
                 );
             }
+        }
+        pawn_structure(board, color, |index| f(index, sign));
+    }
+}
+
+/// Calls `f(index)` once per pawn of `color` and per pawn structure feature it has.
+fn pawn_structure(board: &Board, color: Color, mut f: impl FnMut(usize)) {
+    let ours = board.pieces(color, PieceKind::Pawn);
+    let theirs = board.pieces(!color, PieceKind::Pawn);
+    for sq in ours {
+        let (file, rank) = (sq.file(), sq.rank());
+        let relative_rank = match color {
+            Color::White => rank,
+            Color::Black => 7 - rank,
+        };
+        let ahead = Bitboard(match color {
+            Color::White => (!0u64).checked_shl(8 * u32::from(rank + 1)).unwrap_or(0),
+            Color::Black => (1u64 << (8 * rank)) - 1,
+        });
+        let own_file = Bitboard::file(file);
+        let adjacent = own_file.east() | own_file.west();
+
+        let doubled = !(ours & own_file & ahead).is_empty();
+        if doubled {
+            f(DOUBLED);
+        }
+        if (ours & adjacent).is_empty() {
+            f(ISOLATED);
+        } else if (ours & adjacent & !ahead).is_empty() {
+            let stop = match color {
+                Color::White => Square::new(file, rank + 1),
+                Color::Black => Square::new(file, rank - 1),
+            };
+            if !(attacks::pawn(color, stop) & theirs).is_empty() {
+                f(BACKWARD);
+            }
+        }
+        if !doubled && (theirs & (own_file | adjacent) & ahead).is_empty() {
+            f(PASSED + usize::from(relative_rank) - 1);
         }
     }
 }
