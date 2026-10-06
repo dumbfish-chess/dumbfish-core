@@ -243,3 +243,23 @@ fn eval_command() {
         )
     );
 }
+
+#[test]
+fn avoids_repetition_when_ahead() {
+    let mut engine = Engine::start();
+    engine.send("position fen 4k3/8/8/8/8/8/8/R3K3 w - - 0 1 moves e1d1 e8d8 d1e1 d8e8");
+    engine.send("go depth 3");
+    assert_ne!(engine.best_move(), "e1d1", "e1d1 repeats the position");
+}
+
+#[test]
+fn fifty_move_rule_is_a_draw() {
+    let mut engine = Engine::start();
+    engine.send("position fen 4k3/8/8/8/8/8/8/R3K3 w - - 99 80");
+    engine.send("go depth 2");
+    let lines = engine.read_until("bestmove");
+    assert!(
+        lines.iter().any(|l| l.contains(" score cp 0 ")),
+        "{lines:?}"
+    );
+}

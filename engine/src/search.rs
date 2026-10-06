@@ -92,12 +92,15 @@ impl Searcher<'_> {
 
     fn negamax(&mut self, depth: u32, ply: i32, mut alpha: i32, beta: i32) -> i32 {
         self.nodes += 1;
-        if self.should_abort() {
+        if self.should_abort() || self.board.is_repetition() {
             return 0;
         }
         let moves = self.board.legal_moves();
         if moves.is_empty() {
             return if self.board.in_check() { ply - MATE } else { 0 };
+        }
+        if self.board.halfmove_clock() >= 100 {
+            return 0;
         }
         if depth == 0 {
             return eval::evaluate(self.board);
