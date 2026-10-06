@@ -57,7 +57,8 @@ fn feature_names_are_unique() {
     assert_eq!(names.len(), FEATURE_COUNT);
     assert_eq!(FEATURE_NAMES[5], "pawn_a1");
     assert_eq!(FEATURE_NAMES[5 + 6 * 64 - 1], "king_h8");
-    assert_eq!(FEATURE_NAMES[FEATURE_COUNT - 1], "passed_7");
+    assert_eq!(FEATURE_NAMES[5 + 6 * 64 + 3 + 5], "passed_7");
+    assert_eq!(FEATURE_NAMES[FEATURE_COUNT - 1], "mobility_queen_27");
 }
 
 #[test]
@@ -100,7 +101,7 @@ fn features_of_a_position() {
         .collect();
     assert_eq!(
         active,
-        [("queen", 1), ("queen_d1", 1)],
+        [("queen", 1), ("queen_d1", 1), ("mobility_queen_17", 1)],
         "the kings on e1 and e8 cancel out"
     );
 }
@@ -160,7 +161,7 @@ fn explain_lists_non_zero_features() {
         .iter()
         .map(|l| l.split_whitespace().next().unwrap())
         .collect();
-    assert_eq!(names, ["queen", "queen_d1"], "{text}");
+    assert_eq!(names, ["queen", "queen_d1", "mobility_queen_17"], "{text}");
 
     let weights = parse_weights(include_str!("../weights.txt")).unwrap();
     let queen = FEATURE_NAMES.iter().position(|n| n == "queen").unwrap();
@@ -278,6 +279,119 @@ fn pawn_structure_matches_reference() {
             assert_eq!(
                 pawn_structure(&board),
                 reference_pawn_structure(&board),
+                "{}",
+                board.fen()
+            );
+            checked += 1;
+            let moves = board.legal_moves();
+            if moves.is_empty() {
+                break;
+            }
+            board.make_move(moves[next() as usize % moves.len()]);
+        }
+    }
+    assert!(checked > 500, "{checked}");
+}
+
+/// Mobility features recomputed by walking rays square by square.
+fn reference_mobility(board: &Board) -> Vec<(String, i32)> {
+    let mut values = std::collections::BTreeMap::<String, i32>::new();
+    let on_board = |f: i32, r: i32| (0..8).contains(&f) && (0..8).contains(&r);
+    for (color, sign) in [(Color::White, 1), (Color::Black, -1)] {
+        let enemy_pawn_attacks = |f: i32, r: i32| {
+            let pawn_rank = if color == Color::White { r + 1 } else { r - 1 };
+            [f - 1, f + 1].into_iter().any(|pf| {
+                on_board(pf, pawn_rank)
+                    && board.piece_on(Square::new(pf as u8, pawn_rank as u8))
+                        == Some(Piece::new(!color, PieceKind::Pawn))
+            })
+        };
+        for sq in Square::ALL {
+            let Some(piece) = board.piece_on(sq).filter(|p| p.color == color) else {
+                continue;
+            };
+            let (steps, slides): (&[(i32, i32)], bool) = match piece.kind {
+                PieceKind::Knight => (
+                    &[
+                        (1, 2),
+                        (2, 1),
+                        (2, -1),
+                        (1, -2),
+                        (-1, -2),
+                        (-2, -1),
+                        (-2, 1),
+                        (-1, 2),
+                    ],
+                    false,
+                ),
+                PieceKind::Bishop => (&[(1, 1), (1, -1), (-1, 1), (-1, -1)], true),
+                PieceKind::Rook => (&[(0, 1), (0, -1), (1, 0), (-1, 0)], true),
+                PieceKind::Queen => (
+                    &[
+                        (1, 1),
+                        (1, -1),
+                        (-1, 1),
+                        (-1, -1),
+                        (0, 1),
+                        (0, -1),
+                        (1, 0),
+                        (-1, 0),
+                    ],
+                    true,
+                ),
+                _ => continue,
+            };
+            let mut count = 0;
+            for &(df, dr) in steps {
+                let (mut f, mut r) = (sq.file() as i32 + df, sq.rank() as i32 + dr);
+                while on_board(f, r) {
+                    let target = board.piece_on(Square::new(f as u8, r as u8));
+                    if target.is_none_or(|p| p.color != color) && !enemy_pawn_attacks(f, r) {
+                        count += 1;
+                    }
+                    if target.is_some() || !slides {
+                        break;
+                    }
+                    (f, r) = (f + df, r + dr);
+                }
+            }
+            let name = ["pawn", "knight", "bishop", "rook", "queen", "king"][piece.kind.index()];
+            *values
+                .entry(format!("mobility_{name}_{count}"))
+                .or_default() += sign;
+        }
+    }
+    values.into_iter().filter(|&(_, v)| v != 0).collect()
+}
+
+fn mobility(board: &Board) -> Vec<(String, i32)> {
+    let mut values = vec![0; FEATURE_COUNT];
+    for_each_feature(board, |index, value| values[index] += value);
+    let mut found: Vec<_> = (0..FEATURE_COUNT)
+        .filter(|&i| values[i] != 0 && FEATURE_NAMES[i].starts_with("mobility_"))
+        .map(|i| (FEATURE_NAMES[i].clone(), values[i]))
+        .collect();
+    found.sort();
+    found
+}
+
+#[test]
+fn mobility_matches_reference() {
+    // xorshift64*
+    let mut state = 0x5EED_u64;
+    let mut next = move || {
+        state ^= state >> 12;
+        state ^= state << 25;
+        state ^= state >> 27;
+        state.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    };
+    let mut checked = 0;
+    for fen in POSITIONS {
+        let mut board = Board::from_fen(fen).unwrap();
+        for _ in 0..120 {
+            assert_eq!(
+                mobility(&board),
+                reference_mobility(&board),
                 "{}",
                 board.fen()
             );

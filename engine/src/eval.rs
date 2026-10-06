@@ -10,7 +10,9 @@
 //!   (no own pawns on the adjacent files), `backward` (not isolated, every own pawn on the
 //!   adjacent files is ahead, and an enemy pawn attacks the square in front), `passed_<rank>`
 //!   (no enemy pawns ahead on the file or the adjacent files and no own pawn ahead on the file;
-//!   the rank is counted from the pawn's own side, 2 ..= 7).
+//!   the rank is counted from the pawn's own side, 2 ..= 7);
+//! - `mobility_<piece>_<n>`: one per knight, bishop, rook and queen that can go to `n` squares
+//!   not occupied by its own pieces and not attacked by enemy pawns.
 
 use std::fmt::Write as _;
 use std::sync::LazyLock;
@@ -28,7 +30,15 @@ const ISOLATED: usize = DOUBLED + 1;
 const BACKWARD: usize = ISOLATED + 1;
 /// `passed_2` ..= `passed_7`.
 const PASSED: usize = BACKWARD + 1;
-pub const FEATURE_COUNT: usize = PASSED + 6;
+/// Pieces with mobility features and their largest number of reachable squares.
+const MOBILITY_PIECES: [(PieceKind, usize); 4] = [
+    (PieceKind::Knight, 8),
+    (PieceKind::Bishop, 13),
+    (PieceKind::Rook, 14),
+    (PieceKind::Queen, 27),
+];
+const MOBILITY: usize = PASSED + 6;
+pub const FEATURE_COUNT: usize = MOBILITY + 4 + 8 + 13 + 14 + 27;
 
 /// Feature names by index.
 pub static FEATURE_NAMES: LazyLock<Vec<String>> = LazyLock::new(|| {
@@ -38,6 +48,10 @@ pub static FEATURE_NAMES: LazyLock<Vec<String>> = LazyLock::new(|| {
     }
     names.extend(["doubled", "isolated", "backward"].map(String::from));
     names.extend((2..=7).map(|rank| format!("passed_{rank}")));
+    for (kind, most) in MOBILITY_PIECES {
+        let piece = PIECE_NAMES[kind.index()];
+        names.extend((0..=most).map(|n| format!("mobility_{piece}_{n}")));
+    }
     names
 });
 
@@ -61,6 +75,31 @@ pub fn for_each_feature(board: &Board, mut f: impl FnMut(usize, i32)) {
             }
         }
         pawn_structure(board, color, |index| f(index, sign));
+        mobility(board, color, |index| f(index, sign));
+    }
+}
+
+/// Calls `f(index)` once per knight, bishop, rook and queen of `color`.
+fn mobility(board: &Board, color: Color, mut f: impl FnMut(usize)) {
+    let enemy_pawns = board.pieces(!color, PieceKind::Pawn);
+    let pawn_attacks = match color {
+        Color::White => enemy_pawns.south_east() | enemy_pawns.south_west(),
+        Color::Black => enemy_pawns.north_east() | enemy_pawns.north_west(),
+    };
+    let available = !board.color_bb(color) & !pawn_attacks;
+    let occupied = board.occupied();
+    let mut offset = MOBILITY;
+    for (kind, most) in MOBILITY_PIECES {
+        for sq in board.pieces(color, kind) {
+            let reachable = match kind {
+                PieceKind::Knight => attacks::knight(sq),
+                PieceKind::Bishop => attacks::bishop(sq, occupied),
+                PieceKind::Rook => attacks::rook(sq, occupied),
+                _ => attacks::queen(sq, occupied),
+            };
+            f(offset + (reachable & available).count() as usize);
+        }
+        offset += most + 1;
     }
 }
 
