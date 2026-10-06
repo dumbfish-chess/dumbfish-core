@@ -1,0 +1,7 @@
+[package]
+name = "dumbfish-tuner"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dumbfish-core = { path = "../core" }
