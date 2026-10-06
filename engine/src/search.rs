@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use dumbfish_core::{Board, Move, MoveKind, MoveList, PieceKind};
 
 use crate::eval;
+use crate::skill::{MAX_LEVEL, Skill};
 use crate::tt::{Bound, Entry, TranspositionTable, score_from_tt, score_to_tt};
 
 pub const MAX_DEPTH: u32 = 64;
@@ -17,6 +18,8 @@ pub struct Limits {
     pub depth: Option<u32>,
     pub nodes: Option<u64>,
     pub deadline: Option<Instant>,
+    /// Below `MAX_LEVEL`, adds the skill's node budget and picks the move with its noise.
+    pub skill: Option<Skill>,
 }
 
 /// A finished iteration of iterative deepening.
@@ -39,22 +42,38 @@ pub fn search(
     mut on_iteration: impl FnMut(&Iteration),
 ) -> (Option<Move>, u64) {
     let start = Instant::now();
+    let skill = limits.skill.filter(|s| s.level < MAX_LEVEL);
     let mut moves = board.legal_moves();
     order_moves(board, &mut moves);
     let mut best = moves.first().copied();
     let mut searcher = Searcher {
         board,
         limits,
+        node_limit: [limits.nodes, skill.and_then(Skill::nodes)]
+            .into_iter()
+            .flatten()
+            .min(),
         stop,
         tt,
         nodes: 0,
         aborted: false,
     };
+    let mut scores = Vec::new();
     for depth in 1..=limits.depth.unwrap_or(MAX_DEPTH).min(MAX_DEPTH) {
-        let Some((mv, score)) = searcher.root(depth, &moves) else {
+        let found = match skill {
+            Some(_) => searcher.root_scores(depth, &moves),
+            None => searcher.root(depth, &moves).map(|best| vec![best]),
+        };
+        let Some(found) = found else {
             break;
         };
+        let (mv, score) = found
+            .iter()
+            .copied()
+            .reduce(|a, b| if b.1 > a.1 { b } else { a })
+            .expect("a finished iteration has moves");
         best = Some(mv);
+        scores = found;
         on_iteration(&Iteration {
             depth,
             score,
@@ -62,6 +81,9 @@ pub fn search(
             nodes: searcher.nodes,
             elapsed: start.elapsed(),
         });
+    }
+    if let Some(skill) = skill {
+        best = skill.choose(&scores).or(best);
     }
     (best, searcher.nodes)
 }
@@ -90,6 +112,7 @@ fn move_order_key(board: &Board, mv: Move) -> i32 {
 struct Searcher<'a> {
     board: &'a mut Board,
     limits: &'a Limits,
+    node_limit: Option<u64>,
     stop: &'a AtomicBool,
     tt: &'a mut TranspositionTable,
     nodes: u64,
@@ -115,6 +138,23 @@ impl Searcher<'_> {
             }
         }
         best
+    }
+
+    /// Exact score of every root move, each searched with a full window; `None` if aborted or
+    /// there are no moves.
+    fn root_scores(&mut self, depth: u32, moves: &MoveList) -> Option<Vec<(Move, i32)>> {
+        self.nodes += 1;
+        let mut scores = Vec::with_capacity(moves.len());
+        for &mv in moves {
+            self.board.make_move(mv);
+            let score = -self.negamax(depth - 1, 1, -INFINITY, INFINITY);
+            self.board.unmake_move();
+            if self.aborted {
+                return None;
+            }
+            scores.push((mv, score));
+        }
+        (!scores.is_empty()).then_some(scores)
     }
 
     fn negamax(&mut self, depth: u32, ply: i32, mut alpha: i32, beta: i32) -> i32 {
@@ -255,7 +295,7 @@ impl Searcher<'_> {
     /// Polls the clock and the stop flag every 1024 nodes; the node limit is exact.
     fn should_abort(&mut self) -> bool {
         self.aborted = self.aborted
-            || self.limits.nodes.is_some_and(|n| self.nodes > n)
+            || self.node_limit.is_some_and(|n| self.nodes > n)
             || (self.nodes.is_multiple_of(1024)
                 && (self.stop.load(Ordering::Relaxed)
                     || self.limits.deadline.is_some_and(|d| Instant::now() >= d)));

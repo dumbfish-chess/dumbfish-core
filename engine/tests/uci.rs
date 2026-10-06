@@ -315,3 +315,35 @@ fn finds_mate_in_two_at_every_depth() {
         }
     }
 }
+
+#[test]
+fn skill_level_option() {
+    let mut engine = Engine::start();
+    engine.send("uci");
+    let lines = engine.read_until("uciok");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l == "option name Skill Level type spin default 20 min 0 max 20"),
+        "{lines:?}"
+    );
+    engine.send("setoption name Skill Level value 21");
+    engine.send("setoption name Skill Level value 0");
+    engine.send("isready");
+    let lines = engine.read_until("readyok");
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|l| l.starts_with("info string"))
+            .count(),
+        1,
+        "{lines:?}"
+    );
+    engine.send("position startpos");
+    engine.send("go wtime 1000 btime 1000");
+    let best = engine.best_move();
+    assert!(
+        is_legal(dumbfish_core::board::STARTPOS, &[], &best),
+        "{best}"
+    );
+}

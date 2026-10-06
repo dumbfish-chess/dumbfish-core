@@ -2,12 +2,13 @@ use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use dumbfish_core::{Board, Color};
 
 use crate::eval;
 use crate::search::{self, Iteration, Limits, MATE, MAX_DEPTH};
+use crate::skill::{self, Skill};
 use crate::tt::{self, TranspositionTable};
 
 const MOVE_OVERHEAD: Duration = Duration::from_millis(30);
@@ -17,6 +18,7 @@ pub fn run() {
     let mut engine = Engine {
         board: Board::startpos(),
         tt: Some(TranspositionTable::new(tt::DEFAULT_MEGABYTES)),
+        skill_level: skill::MAX_LEVEL,
         stop: Arc::new(AtomicBool::new(false)),
         worker: None,
     };
@@ -32,6 +34,10 @@ pub fn run() {
                     "option name Hash type spin default {} min 1 max {}",
                     tt::DEFAULT_MEGABYTES,
                     tt::MAX_MEGABYTES
+                );
+                println!(
+                    "option name Skill Level type spin default {0} min 0 max {0}",
+                    skill::MAX_LEVEL
                 );
                 println!("uciok");
             }
@@ -75,6 +81,7 @@ struct Engine {
     board: Board,
     /// Moves into the search thread for the duration of a search.
     tt: Option<TranspositionTable>,
+    skill_level: u8,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<TranspositionTable>>,
 }
@@ -117,13 +124,30 @@ impl Engine {
                     tt::MAX_MEGABYTES
                 )),
             },
+            ("skill level", [level]) => match level.parse::<u8>() {
+                Ok(level) if level <= skill::MAX_LEVEL => {
+                    self.skill_level = level;
+                    Ok(())
+                }
+                _ => Err(format!(
+                    "Skill Level must be 0..={}, got {level:?}",
+                    skill::MAX_LEVEL
+                )),
+            },
             (name, _) => Err(format!("unknown option or value: {name:?}")),
         }
     }
 
     /// Starts a search on a separate thread so that `stop` and `isready` stay responsive.
     fn go<'a>(&mut self, tokens: impl Iterator<Item = &'a str>) {
-        let (limits, infinite) = parse_go(tokens, self.board.side_to_move());
+        let (mut limits, infinite) = parse_go(tokens, self.board.side_to_move());
+        let seed = SystemTime::UNIX_EPOCH
+            .elapsed()
+            .map_or(0, |t| t.as_nanos() as u64);
+        limits.skill = Some(Skill {
+            level: self.skill_level,
+            seed,
+        });
         self.stop.store(false, Ordering::Relaxed);
         let stop = Arc::clone(&self.stop);
         let mut board = self.board.clone();
