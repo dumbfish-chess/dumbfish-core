@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-usage="usage: scripts/sprt.sh <base-ref> [extra fastchess options]
+usage="usage: scripts/sprt.sh <base-ref> [<dev-ref>] [-- extra fastchess options]
 
-Builds dumbfish from <base-ref> and from the working tree, then plays them against each other
-with fastchess until the SPRT accepts H0 or H1. Games go to target/sprt/sprt.pgn.
+Builds dumbfish from <base-ref> and from <dev-ref> (the working tree if omitted), then plays them
+against each other with fastchess until the SPRT accepts H0 or H1. Games go to target/sprt/sprt.pgn.
 
 Environment (defaults):
   TC=8+0.08  CONCURRENCY=\$(nproc)  ELO0=0  ELO1=5
@@ -14,6 +14,12 @@ Non-regression test (simplifications): ELO0=-5 ELO1=0"
 [[ $# -ge 1 && $1 != -h && $1 != --help ]] || { echo "$usage" >&2; exit 1; }
 base_ref=$1
 shift
+dev_ref=
+if [[ $# -ge 1 && $1 != -- ]]; then
+    dev_ref=$1
+    shift
+fi
+[[ $# -ge 1 && $1 == -- ]] && shift
 
 root=$(git rev-parse --show-toplevel)
 work=$root/target/sprt
@@ -25,18 +31,33 @@ if [[ ! -f $book ]]; then
     unzip -o -q "$work/8moves_v3.pgn.zip" -d "$work"
 fi
 
-cargo build --release -p dumbfish --manifest-path "$root/Cargo.toml"
-cp -f "$root/target/release/dumbfish" "$work/dev"
+worktrees=()
+cleanup() {
+    for tree in "${worktrees[@]}"; do
+        git -C "$root" worktree remove --force "$tree"
+    done
+}
+trap cleanup EXIT
 
-base_src=$work/base-src
-git -C "$root" worktree remove --force "$base_src" 2>/dev/null || true
-git -C "$root" worktree add --detach --quiet "$base_src" "$base_ref"
-trap 'git -C "$root" worktree remove --force "$base_src"' EXIT
-cargo build --release -p dumbfish --manifest-path "$base_src/Cargo.toml" --target-dir "$work/base-target"
-cp -f "$work/base-target/release/dumbfish" "$work/base"
+build_ref() {
+    local ref=$1 name=$2
+    local src=$work/$name-src
+    git -C "$root" worktree remove --force "$src" 2>/dev/null || true
+    git -C "$root" worktree add --detach --quiet "$src" "$ref"
+    worktrees+=("$src")
+    cargo build --release -p dumbfish --manifest-path "$src/Cargo.toml" --target-dir "$work/$name-target"
+    cp -f "$work/$name-target/release/dumbfish" "$work/$name"
+    echo "$name: $ref ($(git -C "$root" rev-parse --short "$ref"))"
+}
 
-echo "dev:  working tree ($(git -C "$root" rev-parse --short HEAD)$(git -C "$root" diff --quiet HEAD || echo ', dirty'))"
-echo "base: $base_ref ($(git -C "$root" rev-parse --short "$base_ref"))"
+build_ref "$base_ref" base
+if [[ -n $dev_ref ]]; then
+    build_ref "$dev_ref" dev
+else
+    cargo build --release -p dumbfish --manifest-path "$root/Cargo.toml"
+    cp -f "$root/target/release/dumbfish" "$work/dev"
+    echo "dev: working tree ($(git -C "$root" rev-parse --short HEAD)$(git -C "$root" diff --quiet HEAD || echo ', dirty'))"
+fi
 
 cd "$work"
 fastchess \
