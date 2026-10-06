@@ -68,3 +68,23 @@ fn rejects_bad_input() {
     assert!(log.contains("line 1: no result"), "{log}");
     assert_eq!(after, weights, "weights untouched on error");
 }
+
+#[test]
+fn rare_features_keep_their_weights() {
+    let mut dataset = String::new();
+    for i in 0..10_000 {
+        let result = if i % 4 == 0 { "1/2-1/2" } else { "1-0" };
+        dataset += &format!("4k3/8/8/8/8/8/P7/4K3 w - - c9 \"{result}\";\n");
+    }
+    dataset += "4k3/8/8/8/8/8/8/R3K3 w - - c9 \"0-1\";\n";
+    let initial = include_str!("../../engine/weights.txt");
+    let (ok, weights, log) = tune("rare", &dataset, initial, "50");
+    assert!(ok, "{log}");
+    assert!(log.contains("kept: too little data"), "{log}");
+    let rook = index("rook");
+    assert_eq!(
+        parse_weights(&weights).unwrap()[rook],
+        parse_weights(initial).unwrap()[rook],
+        "one lost game with an extra rook is not evidence"
+    );
+}
