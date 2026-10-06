@@ -1,3 +1,6 @@
+use std::fmt;
+use std::str::FromStr;
+
 use crate::bitboard::Bitboard;
 
 macro_rules! squares {
@@ -52,5 +55,23 @@ impl Square {
 
     pub const fn bb(self) -> Bitboard {
         Bitboard(1 << self as u8)
+    }
+}
+
+impl fmt::Display for Square {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}{}", (b'a' + self.file()) as char, self.rank() + 1)
+    }
+}
+
+impl FromStr for Square {
+    type Err = String;
+
+    /// Parses `e4`-style names.
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s.as_bytes() {
+            &[f @ b'a'..=b'h', r @ b'1'..=b'8'] => Ok(Self::new(f - b'a', r - b'1')),
+            _ => Err(format!("invalid square: {s:?}")),
+        }
     }
 }
