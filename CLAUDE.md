@@ -8,7 +8,9 @@ GUI живёт в другом репозитории и общается с д�
 - `core/` (`dumbfish-core`) — битборды, таблицы атак, Board, FEN, Zobrist, генерация ходов, perft.
 - `engine/` (`dumbfish`) — библиотека (поиск, оценка, UCI, bench) и бинарник. Без аргументов говорит по UCI
   на stdin/stdout; `dumbfish bench [depth]` печатает `N nodes M nps` (`N` — сигнатура, одинаковая на любой машине).
-  Веса оценки — `engine/weights.txt`.
+  Веса оценки — `engine/weights.txt`. UCI-опции: `Hash` (МБ, по умолчанию 16), `Skill Level` (0–20, 20 — полная
+  сила: ниже — бюджет узлов `256 << (level / 2)` и шум до `15 * (20 - level)` cp при выборе хода из корня).
+  Нестандартная команда `eval` — вклад каждого ненулевого признака.
 - `tuner/` (`dumbfish-tuner`) — подбор весов оценки методом Texel: `dumbfish-tuner <dataset.epd> <weights.txt> [epochs]`
   переписывает файл весов. Датасет — `quiet-labeled.v7.epd` (Zurichess, 1.4M позиций с результатами партий):
   ```sh
