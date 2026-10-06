@@ -198,3 +198,15 @@ fn random_games_keep_board_consistent() {
         }
     }
 }
+
+#[test]
+fn move_list_can_be_reordered() {
+    let mut moves = Board::startpos().legal_moves();
+    let mut expected: Vec<_> = moves.iter().map(|m| m.to_string()).collect();
+    moves.sort_unstable_by_key(|m| std::cmp::Reverse(m.to_string()));
+    expected.sort_unstable_by(|a, b| b.cmp(a));
+    assert_eq!(
+        moves.iter().map(|m| m.to_string()).collect::<Vec<_>>(),
+        expected
+    );
+}

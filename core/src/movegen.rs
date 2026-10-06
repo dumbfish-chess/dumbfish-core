@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 
 use crate::board::{BLACK_KINGSIDE, BLACK_QUEENSIDE, WHITE_KINGSIDE, WHITE_QUEENSIDE};
 use crate::{Bitboard, Board, Color, Move, MoveKind, PieceKind, Square, attacks};
@@ -34,6 +34,12 @@ impl Deref for MoveList {
 
     fn deref(&self) -> &[Move] {
         &self.moves[..self.len]
+    }
+}
+
+impl DerefMut for MoveList {
+    fn deref_mut(&mut self) -> &mut [Move] {
+        &mut self.moves[..self.len]
     }
 }
 
