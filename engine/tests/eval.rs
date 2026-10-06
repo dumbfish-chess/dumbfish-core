@@ -290,7 +290,6 @@ fn pawn_structure_examples() {
 
 #[test]
 fn pawn_structure_matches_reference() {
-    // xorshift64*
     let mut state = 0xDEAD_BEEF_u64;
     let mut next = move || {
         state ^= state >> 12;
@@ -369,7 +368,6 @@ fn mobility(board: &Board) -> Vec<(String, i32)> {
 
 #[test]
 fn mobility_matches_reference() {
-    // xorshift64*
     let mut state = 0x5EED_u64;
     let mut next = move || {
         state ^= state >> 12;
@@ -523,7 +521,6 @@ fn king_safety(board: &Board) -> Vec<(String, i32)> {
 
 #[test]
 fn king_safety_matches_reference() {
-    // xorshift64*
     let mut state = 0xC0FFEE_u64;
     let mut next = move || {
         state ^= state >> 12;
