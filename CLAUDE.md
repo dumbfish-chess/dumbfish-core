@@ -9,7 +9,13 @@ GUI живёт в другом репозитории и общается с д�
 - `engine/` (`dumbfish`) — библиотека (поиск, оценка, UCI, bench) и бинарник. Без аргументов говорит по UCI
   на stdin/stdout; `dumbfish bench [depth]` печатает `N nodes M nps` (`N` — сигнатура, одинаковая на любой машине).
   Веса оценки — `engine/weights.txt`.
-- `tuner/` (`dumbfish-tuner`) — подбор весов оценки.
+- `tuner/` (`dumbfish-tuner`) — подбор весов оценки методом Texel: `dumbfish-tuner <dataset.epd> <weights.txt> [epochs]`
+  переписывает файл весов. Датасет — `quiet-labeled.v7.epd` (Zurichess, 1.4M позиций с результатами партий):
+  ```sh
+  mkdir -p target/tuner && curl -fsSL https://bitbucket.org/zurichess/tuner/downloads/quiet-labeled.v7.epd.gz \
+    | gzip -d > target/tuner/quiet-labeled.v7.epd
+  ```
+  Новые веса принимаются только после SPRT, как любое изменение оценки.
 - `tools/` (`dumbfish-tools`) — вспомогательные утилиты:
   - `magics` — генерация magic-чисел для `core/src/attacks.rs`;
   - `perft <depth> [fen]` — perft с разбивкой по ходам из корня (для поиска расхождений с эталонным движком).
