@@ -1,7 +1,8 @@
+use std::cmp::Reverse;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use dumbfish_core::{Board, Move, MoveList};
+use dumbfish_core::{Board, Move, MoveKind, MoveList};
 
 use crate::eval;
 
@@ -36,7 +37,8 @@ pub fn search(
     mut on_iteration: impl FnMut(&Iteration),
 ) -> (Option<Move>, u64) {
     let start = Instant::now();
-    let moves = board.legal_moves();
+    let mut moves = board.legal_moves();
+    order_moves(board, &mut moves);
     let mut best = moves.first().copied();
     let mut searcher = Searcher {
         board,
@@ -59,6 +61,28 @@ pub fn search(
         });
     }
     (best, searcher.nodes)
+}
+
+/// Captures and promotions first, by most valuable victim, then least valuable attacker;
+/// quiet moves keep their generation order.
+fn order_moves(board: &Board, moves: &mut [Move]) {
+    moves.sort_by_key(|&mv| Reverse(move_order_key(board, mv)));
+}
+
+fn move_order_key(board: &Board, mv: Move) -> i32 {
+    // P N B R Q K
+    const VALUE: [i32; 6] = [1, 3, 3, 5, 9, 0];
+    let value = |sq| board.piece_on(sq).map_or(0, |p| VALUE[p.kind.index()]);
+    let gain = match mv.kind() {
+        MoveKind::EnPassant => VALUE[0],
+        MoveKind::Promotion(kind) => value(mv.to()) + VALUE[kind.index()] - VALUE[0],
+        _ => value(mv.to()),
+    };
+    if gain > 0 {
+        10 * gain - value(mv.from())
+    } else {
+        0
+    }
 }
 
 struct Searcher<'a> {
@@ -95,7 +119,7 @@ impl Searcher<'_> {
         if self.should_abort() || self.board.is_repetition() {
             return 0;
         }
-        let moves = self.board.legal_moves();
+        let mut moves = self.board.legal_moves();
         if moves.is_empty() {
             return if self.board.in_check() { ply - MATE } else { 0 };
         }
@@ -105,6 +129,7 @@ impl Searcher<'_> {
         if depth == 0 {
             return eval::evaluate(self.board);
         }
+        order_moves(self.board, &mut moves);
 
         let mut best = -INFINITY;
         for &mv in &moves {
