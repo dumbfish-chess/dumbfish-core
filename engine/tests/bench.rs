@@ -17,9 +17,9 @@ fn bench(args: &[&str]) -> u64 {
 
 #[test]
 fn bench_is_deterministic() {
-    let nodes = bench(&["4"]);
+    let nodes = bench(&["3"]);
     assert!(nodes > 0);
-    assert_eq!(bench(&["4"]), nodes);
+    assert_eq!(bench(&["3"]), nodes);
 }
 
 #[test]

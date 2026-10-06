@@ -3,6 +3,8 @@ use std::time::{Duration, Instant};
 
 use dumbfish_core::{Board, Move, MoveList};
 
+use crate::eval;
+
 pub const MAX_DEPTH: u32 = 64;
 const INFINITY: i32 = 32_000;
 /// Being mated `ply` plies from the root scores `ply - MATE`.
@@ -59,10 +61,6 @@ pub fn search(
     (best, searcher.nodes)
 }
 
-fn evaluate(_board: &Board) -> i32 {
-    0
-}
-
 struct Searcher<'a> {
     board: &'a mut Board,
     limits: &'a Limits,
@@ -102,7 +100,7 @@ impl Searcher<'_> {
             return if self.board.in_check() { ply - MATE } else { 0 };
         }
         if depth == 0 {
-            return evaluate(self.board);
+            return eval::evaluate(self.board);
         }
 
         let mut best = -INFINITY;

@@ -5,7 +5,7 @@ use dumbfish_core::Board;
 
 use crate::search::{self, Limits};
 
-pub const DEFAULT_DEPTH: u32 = 6;
+pub const DEFAULT_DEPTH: u32 = 5;
 
 /// Changing this list or `DEFAULT_DEPTH` changes the bench signature.
 const POSITIONS: [&str; 12] = [

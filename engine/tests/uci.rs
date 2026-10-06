@@ -215,3 +215,12 @@ fn bad_input_is_reported_and_ignored() {
         "{best}"
     );
 }
+
+#[test]
+fn takes_hanging_queen() {
+    let mut engine = Engine::start();
+    engine.send("position fen 4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1");
+    engine.send("go depth 3");
+    let lines = engine.read_until("bestmove");
+    assert_eq!(lines.last().unwrap(), "bestmove e4d5", "{lines:?}");
+}
