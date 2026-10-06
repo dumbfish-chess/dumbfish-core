@@ -271,3 +271,47 @@ fn sees_recapture_beyond_horizon() {
     engine.send("go depth 1");
     assert_ne!(engine.best_move(), "d1d5", "e6xd5 wins the queen");
 }
+
+#[test]
+fn hash_option() {
+    let mut engine = Engine::start();
+    engine.send("uci");
+    let lines = engine.read_until("uciok");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("option name Hash type spin")),
+        "{lines:?}"
+    );
+    engine.send("setoption name Hash value 0");
+    engine.send("setoption name Hash value lots");
+    engine.send("setoption name Threads value 4");
+    engine.send("setoption name Hash value 1");
+    engine.send("isready");
+    let lines = engine.read_until("readyok");
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|l| l.starts_with("info string"))
+            .count(),
+        3,
+        "{lines:?}"
+    );
+    engine.send("position startpos");
+    engine.send("go depth 3");
+    engine.best_move();
+}
+
+#[test]
+fn finds_mate_in_two_at_every_depth() {
+    let mut engine = Engine::start();
+    engine.send("position fen 7k/8/5K2/8/8/8/8/R7 w - - 0 1");
+    engine.send("go depth 6");
+    let lines = engine.read_until("bestmove");
+    for line in lines.iter().filter(|l| l.starts_with("info depth")) {
+        let depth: u32 = line.split_whitespace().nth(2).unwrap().parse().unwrap();
+        if depth >= 3 {
+            assert!(line.contains(" score mate 2 "), "{line}");
+        }
+    }
+}

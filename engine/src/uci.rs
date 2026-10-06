@@ -8,14 +8,18 @@ use dumbfish_core::{Board, Color};
 
 use crate::eval;
 use crate::search::{self, Iteration, Limits, MATE, MAX_DEPTH};
+use crate::tt::{self, TranspositionTable};
 
 const MOVE_OVERHEAD: Duration = Duration::from_millis(30);
 
 /// Reads UCI commands from stdin until `quit` or end of input.
 pub fn run() {
-    let mut board = Board::startpos();
-    let stop = Arc::new(AtomicBool::new(false));
-    let mut worker = None;
+    let mut engine = Engine {
+        board: Board::startpos(),
+        tt: Some(TranspositionTable::new(tt::DEFAULT_MEGABYTES)),
+        stop: Arc::new(AtomicBool::new(false)),
+        worker: None,
+    };
 
     for line in io::stdin().lines() {
         let Ok(line) = line else { break };
@@ -24,49 +28,118 @@ pub fn run() {
             Some("uci") => {
                 println!("id name dumbfish {}", env!("CARGO_PKG_VERSION"));
                 println!("id author tolstovrob");
+                println!(
+                    "option name Hash type spin default {} min 1 max {}",
+                    tt::DEFAULT_MEGABYTES,
+                    tt::MAX_MEGABYTES
+                );
                 println!("uciok");
             }
             Some("isready") => println!("readyok"),
+            Some("setoption") => {
+                engine.wait();
+                if let Err(e) = engine.set_option(tokens) {
+                    println!("info string {e}");
+                }
+            }
             Some("ucinewgame") => {
-                wait(&mut worker);
-                board = Board::startpos();
+                engine.wait();
+                engine.board = Board::startpos();
+                engine.tt().clear();
             }
             Some("position") => {
-                wait(&mut worker);
+                engine.wait();
                 match parse_position(tokens) {
-                    Ok(b) => board = b,
+                    Ok(b) => engine.board = b,
                     Err(e) => println!("info string {e}"),
                 }
             }
             Some("go") => {
-                wait(&mut worker);
-                worker = Some(go(tokens, &board, &stop));
+                engine.wait();
+                engine.go(tokens);
             }
             Some("eval") => {
-                wait(&mut worker);
-                println!("{}", eval::explain(&board));
+                engine.wait();
+                println!("{}", eval::explain(&engine.board));
             }
-            Some("stop") => finish(&mut worker, &stop),
+            Some("stop") => engine.finish(),
             Some("quit") => break,
             Some(other) => println!("info string unknown command: {other}"),
             None => {}
         }
     }
-    finish(&mut worker, &stop);
+    engine.finish();
 }
 
-/// Waits until the running search, if any, has printed `bestmove`. Like Stockfish, commands
-/// that change the position wait for the search instead of stopping it.
-fn wait(worker: &mut Option<JoinHandle<()>>) {
-    if let Some(handle) = worker.take() {
-        handle.join().expect("search thread panicked");
+struct Engine {
+    board: Board,
+    /// Moves into the search thread for the duration of a search.
+    tt: Option<TranspositionTable>,
+    stop: Arc<AtomicBool>,
+    worker: Option<JoinHandle<TranspositionTable>>,
+}
+
+impl Engine {
+    /// Waits until the running search, if any, has printed `bestmove`. Like Stockfish, commands
+    /// that change the position wait for the search instead of stopping it.
+    fn wait(&mut self) {
+        if let Some(handle) = self.worker.take() {
+            self.tt = Some(handle.join().expect("search thread panicked"));
+        }
     }
-}
 
-/// Stops the running search, if any, and waits for its `bestmove`.
-fn finish(worker: &mut Option<JoinHandle<()>>, stop: &AtomicBool) {
-    stop.store(true, Ordering::Relaxed);
-    wait(worker);
+    /// Stops the running search, if any, and waits for its `bestmove`.
+    fn finish(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        self.wait();
+    }
+
+    /// The table while no search is running.
+    fn tt(&mut self) -> &mut TranspositionTable {
+        self.tt.as_mut().expect("no search is running")
+    }
+
+    /// `setoption name <name> [value <value>]`.
+    fn set_option<'a>(&mut self, mut tokens: impl Iterator<Item = &'a str>) -> Result<(), String> {
+        if tokens.next() != Some("name") {
+            return Err("expected setoption name <name> [value <value>]".into());
+        }
+        let name: Vec<_> = tokens.by_ref().take_while(|&t| t != "value").collect();
+        let value: Vec<_> = tokens.collect();
+        match (name.join(" ").to_lowercase().as_str(), &value[..]) {
+            ("hash", [megabytes]) => match megabytes.parse::<usize>() {
+                Ok(mb) if (1..=tt::MAX_MEGABYTES).contains(&mb) => {
+                    self.tt = Some(TranspositionTable::new(mb));
+                    Ok(())
+                }
+                _ => Err(format!(
+                    "Hash must be 1..={}, got {megabytes:?}",
+                    tt::MAX_MEGABYTES
+                )),
+            },
+            (name, _) => Err(format!("unknown option or value: {name:?}")),
+        }
+    }
+
+    /// Starts a search on a separate thread so that `stop` and `isready` stay responsive.
+    fn go<'a>(&mut self, tokens: impl Iterator<Item = &'a str>) {
+        let (limits, infinite) = parse_go(tokens, self.board.side_to_move());
+        self.stop.store(false, Ordering::Relaxed);
+        let stop = Arc::clone(&self.stop);
+        let mut board = self.board.clone();
+        let mut tt = self.tt.take().expect("no search is running");
+        self.worker = Some(thread::spawn(move || {
+            let (best, _) = search::search(&mut board, &limits, &stop, &mut tt, print_info);
+            while infinite && !stop.load(Ordering::Relaxed) {
+                thread::sleep(Duration::from_millis(5));
+            }
+            println!(
+                "bestmove {}",
+                best.map_or("0000".to_string(), |m| m.to_string())
+            );
+            tt
+        }));
+    }
 }
 
 /// `position (startpos | fen <fen>) [moves <move>...]`. Nothing changes on error.
@@ -96,16 +169,11 @@ fn parse_position<'a>(mut tokens: impl Iterator<Item = &'a str>) -> Result<Board
     Ok(board)
 }
 
-/// Starts a search on a separate thread so that `stop` and `isready` stay responsive.
-fn go<'a>(
-    mut tokens: impl Iterator<Item = &'a str>,
-    board: &Board,
-    stop: &Arc<AtomicBool>,
-) -> JoinHandle<()> {
+/// Search limits and whether the search is infinite, from the arguments of `go`.
+fn parse_go<'a>(mut tokens: impl Iterator<Item = &'a str>, us: Color) -> (Limits, bool) {
     let start = Instant::now();
     let mut limits = Limits::default();
     let (mut time, mut inc, mut moves_to_go, mut infinite) = (None, Duration::ZERO, None, false);
-    let us = board.side_to_move();
     while let Some(token) = tokens.next() {
         let mut number = || tokens.next().and_then(|v| v.parse::<u64>().ok());
         match token {
@@ -129,20 +197,7 @@ fn go<'a>(
         let budget = time / moves_to_go.unwrap_or(30) as u32 + inc / 2;
         limits.deadline = Some(start + budget.min(time.saturating_sub(MOVE_OVERHEAD)));
     }
-
-    stop.store(false, Ordering::Relaxed);
-    let stop = Arc::clone(stop);
-    let mut board = board.clone();
-    thread::spawn(move || {
-        let (best, _) = search::search(&mut board, &limits, &stop, print_info);
-        while infinite && !stop.load(Ordering::Relaxed) {
-            thread::sleep(Duration::from_millis(5));
-        }
-        println!(
-            "bestmove {}",
-            best.map_or("0000".to_string(), |m| m.to_string())
-        );
-    })
+    (limits, infinite)
 }
 
 fn print_info(it: &Iteration) {

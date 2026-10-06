@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use dumbfish_core::{Board, Move, MoveKind, MoveList};
 
 use crate::eval;
+use crate::tt::{Bound, Entry, TranspositionTable, score_from_tt, score_to_tt};
 
 pub const MAX_DEPTH: u32 = 64;
 const INFINITY: i32 = 32_000;
@@ -34,6 +35,7 @@ pub fn search(
     board: &mut Board,
     limits: &Limits,
     stop: &AtomicBool,
+    tt: &mut TranspositionTable,
     mut on_iteration: impl FnMut(&Iteration),
 ) -> (Option<Move>, u64) {
     let start = Instant::now();
@@ -44,6 +46,7 @@ pub fn search(
         board,
         limits,
         stop,
+        tt,
         nodes: 0,
         aborted: false,
     };
@@ -88,6 +91,7 @@ struct Searcher<'a> {
     board: &'a mut Board,
     limits: &'a Limits,
     stop: &'a AtomicBool,
+    tt: &'a mut TranspositionTable,
     nodes: u64,
     aborted: bool,
 }
@@ -118,6 +122,20 @@ impl Searcher<'_> {
         if self.should_abort() || self.board.is_repetition() {
             return 0;
         }
+        let key = self.board.hash();
+        let entry = self.tt.probe(key);
+        if let Some(e) = entry
+            && u32::from(e.depth) >= depth
+        {
+            let score = score_from_tt(e.score, ply);
+            match e.bound {
+                Bound::Exact => return score,
+                Bound::Lower if score >= beta => return score,
+                Bound::Upper if score <= alpha => return score,
+                _ => {}
+            }
+        }
+
         let mut moves = self.board.legal_moves();
         if moves.is_empty() {
             return if self.board.in_check() { ply - MATE } else { 0 };
@@ -129,8 +147,15 @@ impl Searcher<'_> {
             return self.quiescence(alpha, beta);
         }
         order_moves(self.board, &mut moves);
+        if let Some(i) = moves
+            .iter()
+            .position(|&mv| Some(mv) == entry.and_then(|e| e.best))
+        {
+            moves[..=i].rotate_right(1);
+        }
 
-        let mut best = -INFINITY;
+        let original_alpha = alpha;
+        let (mut best, mut best_move) = (-INFINITY, None);
         for &mv in &moves {
             self.board.make_move(mv);
             let score = -self.negamax(depth - 1, ply + 1, -beta, -alpha);
@@ -138,12 +163,27 @@ impl Searcher<'_> {
             if self.aborted {
                 return 0;
             }
-            best = best.max(score);
+            if score > best {
+                (best, best_move) = (score, Some(mv));
+            }
             alpha = alpha.max(score);
             if alpha >= beta {
                 break;
             }
         }
+
+        let bound = match best {
+            s if s <= original_alpha => Bound::Upper,
+            s if s >= beta => Bound::Lower,
+            _ => Bound::Exact,
+        };
+        self.tt.store(Entry {
+            key,
+            best: best_move,
+            score: score_to_tt(best, ply),
+            depth: depth as u8,
+            bound,
+        });
         best
     }
 

@@ -4,6 +4,7 @@ use std::time::Instant;
 use dumbfish_core::Board;
 
 use crate::search::{self, Limits};
+use crate::tt::{self, TranspositionTable};
 
 pub const DEFAULT_DEPTH: u32 = 5;
 
@@ -19,10 +20,12 @@ pub fn run(depth: u32) {
         ..Limits::default()
     };
     let start = Instant::now();
+    let mut tt = TranspositionTable::new(tt::DEFAULT_MEGABYTES);
     let mut nodes = 0;
     for fen in POSITIONS.lines() {
         let mut board = Board::from_fen(fen).expect("valid bench position");
-        nodes += search::search(&mut board, &limits, &stop, |_| {}).1;
+        tt.clear();
+        nodes += search::search(&mut board, &limits, &stop, &mut tt, |_| {}).1;
     }
     let nps = (nodes as f64 / start.elapsed().as_secs_f64().max(1e-3)) as u64;
     println!("{nodes} nodes {nps} nps");
