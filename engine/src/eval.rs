@@ -12,7 +12,13 @@
 //!   (no enemy pawns ahead on the file or the adjacent files and no own pawn ahead on the file;
 //!   the rank is counted from the pawn's own side, 2 ..= 7);
 //! - `mobility_<piece>_<n>`: one per knight, bishop, rook and queen that can go to `n` squares
-//!   not occupied by its own pieces and not attacked by enemy pawns.
+//!   not occupied by its own pieces and not attacked by enemy pawns;
+//! - king safety, scored for the attacker: `king_attack_<piece>` (squares of the enemy king zone,
+//!   the king and its neighbours, attacked by each of our knights, bishops, rooks and queens),
+//!   `king_attackers_<n>` (one per side: how many of those pieces attack the zone, 4 and more
+//!   counted as 4); and for the defender: `shield_near` and `shield_far` (own pawns one and two
+//!   squares in front of the king on its file and the adjacent ones), `king_open_files` (those
+//!   files without own pawns).
 
 use std::fmt::Write as _;
 use std::sync::LazyLock;
@@ -38,7 +44,14 @@ const MOBILITY_PIECES: [(PieceKind, usize); 4] = [
     (PieceKind::Queen, 27),
 ];
 const MOBILITY: usize = PASSED + 6;
-pub const FEATURE_COUNT: usize = MOBILITY + 4 + 8 + 13 + 14 + 27;
+/// `king_attack_knight` ..= `king_attack_queen`.
+const KING_ATTACK: usize = MOBILITY + 4 + 8 + 13 + 14 + 27;
+/// `king_attackers_0` ..= `king_attackers_4`.
+const KING_ATTACKERS: usize = KING_ATTACK + 4;
+const SHIELD_NEAR: usize = KING_ATTACKERS + 5;
+const SHIELD_FAR: usize = SHIELD_NEAR + 1;
+const KING_OPEN_FILES: usize = SHIELD_FAR + 1;
+pub const FEATURE_COUNT: usize = KING_OPEN_FILES + 1;
 
 /// Feature names by index.
 pub static FEATURE_NAMES: LazyLock<Vec<String>> = LazyLock::new(|| {
@@ -52,6 +65,13 @@ pub static FEATURE_NAMES: LazyLock<Vec<String>> = LazyLock::new(|| {
         let piece = PIECE_NAMES[kind.index()];
         names.extend((0..=most).map(|n| format!("mobility_{piece}_{n}")));
     }
+    names.extend(
+        PIECE_NAMES[1..5]
+            .iter()
+            .map(|piece| format!("king_attack_{piece}")),
+    );
+    names.extend((0..=4).map(|n| format!("king_attackers_{n}")));
+    names.extend(["shield_near", "shield_far", "king_open_files"].map(String::from));
     names
 });
 
@@ -76,6 +96,63 @@ pub fn for_each_feature(board: &Board, mut f: impl FnMut(usize, i32)) {
         }
         pawn_structure(board, color, |index| f(index, sign));
         mobility(board, color, |index| f(index, sign));
+        king_safety(board, color, |index, value| f(index, sign * value));
+    }
+}
+
+/// Attacks of `color` on the enemy king zone and the pawn cover of the own king.
+fn king_safety(board: &Board, color: Color, mut f: impl FnMut(usize, i32)) {
+    let enemy_king = board.king(!color);
+    let zone = attacks::king(enemy_king) | enemy_king.bb();
+    let occupied = board.occupied();
+    let mut attackers = 0;
+    for (i, kind) in [
+        PieceKind::Knight,
+        PieceKind::Bishop,
+        PieceKind::Rook,
+        PieceKind::Queen,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for sq in board.pieces(color, kind) {
+            let reachable = match kind {
+                PieceKind::Knight => attacks::knight(sq),
+                PieceKind::Bishop => attacks::bishop(sq, occupied),
+                PieceKind::Rook => attacks::rook(sq, occupied),
+                _ => attacks::queen(sq, occupied),
+            };
+            let hits = (reachable & zone).count() as i32;
+            if hits > 0 {
+                f(KING_ATTACK + i, hits);
+                attackers += 1;
+            }
+        }
+    }
+    f(KING_ATTACKERS + attackers.min(4), 1);
+
+    let king = board.king(color);
+    let pawns = board.pieces(color, PieceKind::Pawn);
+    let files = Bitboard::file(king.file());
+    let files = files | files.east() | files.west();
+    let rank_ahead = |steps: u8| match color {
+        Color::White => king.rank().checked_add(steps).filter(|&r| r < 8),
+        Color::Black => king.rank().checked_sub(steps),
+    };
+    for (steps, index) in [(1, SHIELD_NEAR), (2, SHIELD_FAR)] {
+        if let Some(rank) = rank_ahead(steps) {
+            let shield = (pawns & files & Bitboard::rank(rank)).count() as i32;
+            if shield > 0 {
+                f(index, shield);
+            }
+        }
+    }
+    let open = (0..8)
+        .filter(|&file| !(files & Bitboard::file(file)).is_empty())
+        .filter(|&file| (pawns & Bitboard::file(file)).is_empty())
+        .count() as i32;
+    if open > 0 {
+        f(KING_OPEN_FILES, open);
     }
 }
 
@@ -238,7 +315,7 @@ pub fn explain(board: &Board) -> String {
     for_each_feature(board, |index, value| values[index] += value);
 
     let mut out = format!(
-        "{:<12}{:>8}{:>10}{:>12}{:>10}{:>10}\n",
+        "{:<20}{:>8}{:>10}{:>12}{:>10}{:>10}\n",
         "feature", "value", "opening", "middlegame", "endgame", "blended"
     );
     for (index, &value) in values.iter().enumerate().filter(|&(_, &v)| v != 0) {
@@ -247,7 +324,7 @@ pub fn explain(board: &Board) -> String {
         let blended = f64::from(value * dot(blend, weights)) / f64::from(MAX_PHASE);
         writeln!(
             out,
-            "{:<12}{value:>8}{opening:>10}{middlegame:>12}{endgame:>10}{blended:>10.2}",
+            "{:<20}{value:>8}{opening:>10}{middlegame:>12}{endgame:>10}{blended:>10.2}",
             FEATURE_NAMES[index]
         )
         .unwrap();

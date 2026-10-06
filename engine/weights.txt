@@ -463,3 +463,15 @@ mobility_queen_24        0           0        0
 mobility_queen_25        0           0        0
 mobility_queen_26        0           0        0
 mobility_queen_27        0           0        0
+king_attack_knight        0           0        0
+king_attack_bishop        0           0        0
+king_attack_rook        0           0        0
+king_attack_queen        0           0        0
+king_attackers_0        0           0        0
+king_attackers_1        0           0        0
+king_attackers_2        0           0        0
+king_attackers_3        0           0        0
+king_attackers_4        0           0        0
+shield_near        0           0        0
+shield_far        0           0        0
+king_open_files        0           0        0
