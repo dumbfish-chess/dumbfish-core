@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use dumbfish_core::{Board, Color};
 
+use crate::eval;
 use crate::search::{self, Iteration, Limits, MATE, MAX_DEPTH};
 
 const MOVE_OVERHEAD: Duration = Duration::from_millis(30);
@@ -40,6 +41,10 @@ pub fn run() {
             Some("go") => {
                 wait(&mut worker);
                 worker = Some(go(tokens, &board, &stop));
+            }
+            Some("eval") => {
+                wait(&mut worker);
+                println!("{}", eval::explain(&board));
             }
             Some("stop") => finish(&mut worker, &stop),
             Some("quit") => break,

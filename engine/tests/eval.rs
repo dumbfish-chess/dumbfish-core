@@ -1,4 +1,4 @@
-use dumbfish::eval::{FEATURES, MAX_PHASE, blend, evaluate, parse_weights, phase};
+use dumbfish::eval::{FEATURES, MAX_PHASE, blend, evaluate, explain, parse_weights, phase};
 use dumbfish_core::Board;
 
 const POSITIONS: [&str; 9] = [
@@ -108,4 +108,25 @@ fn weights_format() {
         let message = parse_weights(&bad).unwrap_err();
         assert!(message.contains(error), "{message:?} for {bad:?}");
     }
+}
+
+#[test]
+fn explain_lists_every_feature() {
+    let board = Board::from_fen("4k3/8/8/8/8/8/8/3QK3 b - - 0 1").unwrap();
+    let text = explain(&board);
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(lines.len(), FEATURES.len() + 3, "{text}");
+    for (feature, line) in FEATURES.iter().zip(&lines[1..]) {
+        assert!(line.starts_with(feature.name), "{line:?}");
+    }
+    let queen: Vec<_> = lines[5].split_whitespace().collect();
+    assert_eq!(queen, ["queen", "1", "900", "900", "900", "900.00"]);
+    assert_eq!(
+        lines[6],
+        "phase 4/24: opening 0/24, middlegame 8/24, endgame 16/24"
+    );
+    assert_eq!(
+        lines[7],
+        "total: 900 cp for white, -900 cp for the side to move"
+    );
 }

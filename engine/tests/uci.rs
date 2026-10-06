@@ -224,3 +224,16 @@ fn takes_hanging_queen() {
     let lines = engine.read_until("bestmove");
     assert_eq!(lines.last().unwrap(), "bestmove e4d5", "{lines:?}");
 }
+
+#[test]
+fn eval_command() {
+    let mut engine = Engine::start();
+    engine.send("position startpos moves e2e4 d7d5 e4d5");
+    engine.send("eval");
+    let lines = engine.read_until("total:");
+    assert!(lines[0].starts_with("feature"), "{lines:?}");
+    assert_eq!(
+        lines.last().unwrap(),
+        "total: 100 cp for white, -100 cp for the side to move"
+    );
+}

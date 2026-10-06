@@ -2,6 +2,7 @@
 //! opening, middlegame and endgame, blended by the game phase. The weights live in
 //! `engine/weights.txt`, one line per feature: `name opening middlegame endgame`.
 
+use std::fmt::Write as _;
 use std::sync::LazyLock;
 
 use dumbfish_core::{Board, Color, PieceKind};
@@ -114,6 +115,45 @@ pub fn evaluate(board: &Board) -> i32 {
         Color::White => white,
         Color::Black => -white,
     }
+}
+
+/// Table for the `eval` command: every feature's value, its contribution with the weights of each
+/// phase, and its actual contribution in this position (white's point of view, centipawns).
+pub fn explain(board: &Board) -> String {
+    let phase = phase(board);
+    let blend = blend(phase);
+    let mut out = format!(
+        "{:<12}{:>8}{:>10}{:>12}{:>10}{:>10}\n",
+        "feature", "value", "opening", "middlegame", "endgame", "blended"
+    );
+    for (feature, weights) in FEATURES.iter().zip(WEIGHTS.iter()) {
+        let value = (feature.value)(board);
+        let [opening, middlegame, endgame] = weights.map(|w| value * w);
+        let blended = f64::from(value * dot(blend, weights)) / f64::from(MAX_PHASE);
+        writeln!(
+            out,
+            "{:<12}{value:>8}{opening:>10}{middlegame:>12}{endgame:>10}{blended:>10.2}",
+            feature.name
+        )
+        .unwrap();
+    }
+    let [opening, middlegame, endgame] = blend;
+    writeln!(
+        out,
+        "phase {phase}/{MAX_PHASE}: opening {opening}/{MAX_PHASE}, middlegame {middlegame}/{MAX_PHASE}, endgame {endgame}/{MAX_PHASE}"
+    )
+    .unwrap();
+    let stm = evaluate(board);
+    let white = match board.side_to_move() {
+        Color::White => stm,
+        Color::Black => -stm,
+    };
+    write!(
+        out,
+        "total: {white} cp for white, {stm} cp for the side to move"
+    )
+    .unwrap();
+    out
 }
 
 fn dot(a: [i32; 3], b: &[i32; 3]) -> i32 {
