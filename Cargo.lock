@@ -24,5 +24,6 @@ dependencies = [
 name = "dumbfish-tuner"
 version = "0.1.0"
 dependencies = [
+ "dumbfish",
  "dumbfish-core",
 ]
