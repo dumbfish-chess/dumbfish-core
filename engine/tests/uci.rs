@@ -263,3 +263,11 @@ fn fifty_move_rule_is_a_draw() {
         "{lines:?}"
     );
 }
+
+#[test]
+fn sees_recapture_beyond_horizon() {
+    let mut engine = Engine::start();
+    engine.send("position fen 4k3/8/4p3/3p4/8/8/8/3QK3 w - - 0 1");
+    engine.send("go depth 1");
+    assert_ne!(engine.best_move(), "d1d5", "e6xd5 wins the queen");
+}

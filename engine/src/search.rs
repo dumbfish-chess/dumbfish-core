@@ -126,7 +126,7 @@ impl Searcher<'_> {
             return 0;
         }
         if depth == 0 {
-            return eval::evaluate(self.board);
+            return self.quiescence(alpha, beta);
         }
         order_moves(self.board, &mut moves);
 
@@ -134,6 +134,42 @@ impl Searcher<'_> {
         for &mv in &moves {
             self.board.make_move(mv);
             let score = -self.negamax(depth - 1, ply + 1, -beta, -alpha);
+            self.board.unmake_move();
+            if self.aborted {
+                return 0;
+            }
+            best = best.max(score);
+            alpha = alpha.max(score);
+            if alpha >= beta {
+                break;
+            }
+        }
+        best
+    }
+
+    /// Searches captures only, until the position is quiet; the side to move may also stand pat
+    /// on the static evaluation.
+    fn quiescence(&mut self, mut alpha: i32, beta: i32) -> i32 {
+        self.nodes += 1;
+        if self.should_abort() {
+            return 0;
+        }
+        let stand_pat = eval::evaluate(self.board);
+        if stand_pat >= beta {
+            return stand_pat;
+        }
+        alpha = alpha.max(stand_pat);
+
+        let mut moves = self.board.legal_moves();
+        order_moves(self.board, &mut moves);
+        let captures = moves
+            .iter()
+            .take_while(|&&mv| move_order_key(self.board, mv) > 0)
+            .count();
+        let mut best = stand_pat;
+        for &mv in &moves[..captures] {
+            self.board.make_move(mv);
+            let score = -self.quiescence(-beta, -alpha);
             self.board.unmake_move();
             if self.aborted {
                 return 0;
