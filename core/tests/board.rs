@@ -180,3 +180,39 @@ fn transposition_has_same_hash() {
     board.make_move(Move::new(F6, G8, Normal));
     assert_eq!(board.hash(), start);
 }
+
+#[test]
+fn repetition() {
+    let mut board = Board::startpos();
+    let shuffle = [(G1, F3), (G8, F6), (F3, G1), (F6, G8)];
+    for (from, to) in shuffle {
+        assert!(!board.is_repetition());
+        board.make_move(Move::new(from, to, Normal));
+    }
+    assert!(board.is_repetition(), "start position again");
+    board.make_move(Move::new(G1, F3, Normal));
+    assert!(board.is_repetition(), "position after 1.Nf3 again");
+    board.unmake_move();
+    board.unmake_move();
+    assert!(!board.is_repetition(), "unmake forgets the repetition");
+
+    let mut board = Board::startpos();
+    for (from, to) in [(G1, F3), (G8, F6), (F3, G1)] {
+        board.make_move(Move::new(from, to, Normal));
+    }
+    board.make_move(Move::new(B8, C6, Normal));
+    assert!(
+        !board.is_repetition(),
+        "same pieces moved, different position"
+    );
+}
+
+#[test]
+fn repetition_needs_same_side_to_move() {
+    let mut board = Board::from_fen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1").unwrap();
+    for (from, to) in [(E1, D1), (E8, D8), (D1, D2), (D8, E8), (D2, E1)] {
+        board.make_move(Move::new(from, to, Normal));
+    }
+    assert_eq!(board.fen().split(' ').next(), Some("4k3/8/8/8/8/8/8/R3K3"));
+    assert!(!board.is_repetition(), "same placement, other side to move");
+}

@@ -102,6 +102,18 @@ impl Board {
         self.hash
     }
 
+    /// The position already occurred with the same side to move since the last capture or pawn
+    /// move, counting the moves made on this board.
+    pub fn is_repetition(&self) -> bool {
+        self.history
+            .iter()
+            .rev()
+            .take(self.halfmove as usize)
+            .skip(1)
+            .step_by(2)
+            .any(|undo| undo.hash == self.hash)
+    }
+
     /// Pieces of both colors attacking `sq`, with sliders seeing through everything not in `occupied`.
     pub fn attackers_to(&self, sq: Square, occupied: Bitboard) -> Bitboard {
         use PieceKind::*;
