@@ -1,6 +1,4 @@
-mod bench;
-mod search;
-mod uci;
+use dumbfish::{bench, uci};
 
 /// `dumbfish` speaks UCI on stdin/stdout; `dumbfish bench [depth]` prints the bench signature.
 fn main() {
