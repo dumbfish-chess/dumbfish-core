@@ -1,0 +1,6 @@
+# feature  opening  middlegame  endgame
+pawn       100      100         100
+knight     320      320         320
+bishop     330      330         330
+rook       500      500         500
+queen      900      900         900
