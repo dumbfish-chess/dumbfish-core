@@ -216,3 +216,34 @@ fn repetition_needs_same_side_to_move() {
     assert_eq!(board.fen().split(' ').next(), Some("4k3/8/8/8/8/8/8/R3K3"));
     assert!(!board.is_repetition(), "same placement, other side to move");
 }
+
+#[test]
+fn null_move() {
+    let fen = "rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 3";
+    let mut board = Board::from_fen(fen).unwrap();
+    let hash = board.hash();
+    board.make_null_move();
+    assert_eq!(
+        board.fen(),
+        "rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 3"
+    );
+    assert_consistent(&board);
+    board.unmake_null_move();
+    assert_eq!(board.fen(), fen);
+    assert_eq!(board.hash(), hash);
+}
+
+#[test]
+fn null_move_cuts_repetition_window() {
+    let mut board = Board::startpos();
+    for (from, to) in [(G1, F3), (G8, F6), (F3, G1)] {
+        board.make_move(Move::new(from, to, Normal));
+    }
+    board.make_null_move();
+    board.make_move(Move::new(F6, G8, Normal));
+    board.make_null_move();
+    assert!(
+        !board.is_repetition(),
+        "the start position was reached through null moves"
+    );
+}

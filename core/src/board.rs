@@ -189,6 +189,34 @@ impl Board {
         self.hash ^= zobrist::side();
     }
 
+    /// Passes the turn without moving, for null move pruning; the side to move must not be in
+    /// check. Positions before it do not count for `is_repetition`. Taken back by
+    /// `unmake_null_move`.
+    pub fn make_null_move(&mut self) {
+        self.history.push(Undo {
+            mv: Move::new(Square::A1, Square::A1, MoveKind::Normal),
+            captured: None,
+            castling: self.castling,
+            en_passant: self.en_passant,
+            halfmove: self.halfmove,
+            hash: self.hash,
+        });
+        if let Some(ep) = self.en_passant.take() {
+            self.hash ^= zobrist::en_passant(ep);
+        }
+        self.halfmove = 0;
+        self.side = !self.side;
+        self.hash ^= zobrist::side();
+    }
+
+    pub fn unmake_null_move(&mut self) {
+        let undo = self.history.pop().expect("no null move to unmake");
+        self.side = !self.side;
+        self.en_passant = undo.en_passant;
+        self.halfmove = undo.halfmove;
+        self.hash = undo.hash;
+    }
+
     /// Takes back the last `make_move`.
     pub fn unmake_move(&mut self) {
         let undo = self.history.pop().expect("no move to unmake");
