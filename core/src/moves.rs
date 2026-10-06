@@ -24,7 +24,7 @@ impl Move {
             MoveKind::DoublePush => 1,
             MoveKind::Castle => 2,
             MoveKind::EnPassant => 3,
-            MoveKind::Promotion(piece) => 3 + piece as u16, // Knight..Queen -> 4..7
+            MoveKind::Promotion(piece) => 3 + piece as u16,
         };
         Self(from as u16 | (to as u16) << 6 | flag << 12)
     }

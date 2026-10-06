@@ -150,7 +150,6 @@ fn mate_and_stalemate() {
 /// Random games: every generated move must keep the mover's king safe and unmake exactly.
 #[test]
 fn random_games_keep_board_consistent() {
-    // xorshift64*
     let mut state = 0x1234_5678_9ABC_DEF0u64;
     let mut next = move || {
         state ^= state >> 12;

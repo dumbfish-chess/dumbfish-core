@@ -121,7 +121,6 @@ fn sliders_match_reference_on_all_relevant_subsets() {
 
 #[test]
 fn sliders_match_reference_on_random_boards() {
-    // xorshift64*
     let mut state = 42u64;
     let mut next = || {
         state ^= state >> 12;

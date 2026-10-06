@@ -70,7 +70,6 @@ fn order_moves(board: &Board, moves: &mut [Move]) {
 }
 
 fn move_order_key(board: &Board, mv: Move) -> i32 {
-    // P N B R Q K
     const VALUE: [i32; 6] = [1, 3, 3, 5, 9, 0];
     let value = |sq| board.piece_on(sq).map_or(0, |p| VALUE[p.kind.index()]);
     let gain = match mv.kind() {
