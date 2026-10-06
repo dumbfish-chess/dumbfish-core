@@ -1,4 +1,6 @@
-use dumbfish::eval::{FEATURES, MAX_PHASE, blend, evaluate, explain, parse_weights, phase};
+use dumbfish::eval::{
+    FEATURES, MAX_PHASE, blend, evaluate, explain, format_weights, parse_weights, phase,
+};
 use dumbfish_core::Board;
 
 const POSITIONS: [&str; 9] = [
@@ -37,6 +39,12 @@ fn mirror(fen: &str) -> String {
         fields[4],
         fields[5]
     )
+}
+
+#[test]
+fn shipped_weights_are_canonical() {
+    let text = include_str!("../weights.txt");
+    assert_eq!(format_weights(&parse_weights(text).unwrap()), text);
 }
 
 #[test]

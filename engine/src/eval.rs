@@ -88,6 +88,23 @@ pub fn parse_weights(text: &str) -> Result<Weights, String> {
         .collect()
 }
 
+/// Canonical text of a weights file; `parse_weights` reads it back unchanged.
+pub fn format_weights(weights: &Weights) -> String {
+    let mut out = format!(
+        "{:<10} {:>8} {:>11} {:>8}\n",
+        "# feature", "opening", "middlegame", "endgame"
+    );
+    for (feature, [opening, middlegame, endgame]) in FEATURES.iter().zip(weights) {
+        writeln!(
+            out,
+            "{:<10} {opening:>8} {middlegame:>11} {endgame:>8}",
+            feature.name
+        )
+        .unwrap();
+    }
+    out
+}
+
 /// 0 (kings and pawns only) ..= `MAX_PHASE`.
 pub fn phase(board: &Board) -> i32 {
     use PieceKind::*;
