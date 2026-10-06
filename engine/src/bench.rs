@@ -7,21 +7,8 @@ use crate::search::{self, Limits};
 
 pub const DEFAULT_DEPTH: u32 = 5;
 
-/// Changing this list or `DEFAULT_DEPTH` changes the bench signature.
-const POSITIONS: [&str; 12] = [
-    "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-    "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
-    "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
-    "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
-    "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
-    "r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - - 0 10",
-    "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
-    "rnbqkb1r/pp1p1ppp/4pn2/2p5/2PP4/2N5/PP2PPPP/R1BQKBNR w KQkq - 0 4",
-    "r2q1rk1/ppp2ppp/2np1n2/2b1p1B1/2B1P1b1/2NP1N2/PPP2PPP/R2Q1RK1 w - - 4 8",
-    "8/5pk1/6p1/8/3R4/6PP/5PK1/r7 w - - 0 40",
-    "6k1/5p1p/6p1/8/8/1Q6/5PPP/6K1 w - - 0 1",
-    "8/8/4k3/8/2p5/8/B2K4/8 w - - 0 1",
-];
+/// One FEN per line; changing it or `DEFAULT_DEPTH` changes the bench signature.
+const POSITIONS: &str = include_str!("../bench.epd");
 
 /// Searches every position to `depth` and prints the total node count, which must be
 /// identical on every machine; `nps` is informational.
@@ -33,7 +20,7 @@ pub fn run(depth: u32) {
     };
     let start = Instant::now();
     let mut nodes = 0;
-    for fen in POSITIONS {
+    for fen in POSITIONS.lines() {
         let mut board = Board::from_fen(fen).expect("valid bench position");
         nodes += search::search(&mut board, &limits, &stop, |_| {}).1;
     }
