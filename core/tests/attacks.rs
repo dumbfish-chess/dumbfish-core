@@ -1,7 +1,7 @@
 //! Attack tables against slow reference implementations written independently of the engine.
 
 use dumbfish_core::Square::*;
-use dumbfish_core::attacks::{bishop, king, knight, pawn, queen, rook};
+use dumbfish_core::attacks::{between, bishop, king, knight, line, pawn, queen, rook};
 use dumbfish_core::{Bitboard, Color, Square};
 
 const BISHOP_DIRS: [(i8, i8); 4] = [(1, 1), (1, -1), (-1, 1), (-1, -1)];
@@ -162,4 +162,40 @@ fn known_values() {
     assert_eq!(queen(D4, Bitboard::EMPTY).count(), 27);
     assert_eq!(rook(A1, B1.bb() | A2.bb()), B1.bb() | A2.bb());
     assert_eq!(knight(A1), B3.bb() | C2.bb());
+}
+
+#[test]
+fn between_and_line_match_reference() {
+    for a in Square::ALL {
+        for b in Square::ALL {
+            let (df, dr) = (
+                b.file() as i8 - a.file() as i8,
+                b.rank() as i8 - a.rank() as i8,
+            );
+            let aligned = a != b && (df == 0 || dr == 0 || df.abs() == dr.abs());
+            let (mut expected_line, mut expected_between) = (Bitboard::EMPTY, Bitboard::EMPTY);
+            for s in Square::ALL.into_iter().filter(|_| aligned) {
+                let (sf, sr) = (
+                    s.file() as i8 - a.file() as i8,
+                    s.rank() as i8 - a.rank() as i8,
+                );
+                // Collinear with a and b; the projection onto a->b tells whether s lies strictly between them.
+                if sf * dr == sr * df {
+                    expected_line |= s.bb();
+                    let t = sf * df + sr * dr;
+                    if 0 < t && t < df * df + dr * dr {
+                        expected_between |= s.bb();
+                    }
+                }
+            }
+            assert_eq!(line(a, b), expected_line, "line {a:?} {b:?}");
+            assert_eq!(between(a, b), expected_between, "between {a:?} {b:?}");
+        }
+    }
+    assert_eq!(between(A1, H8).count(), 6);
+    assert_eq!(between(A1, B3), Bitboard::EMPTY);
+    assert_eq!(
+        line(B1, C2),
+        B1.bb() | C2.bb() | D3.bb() | E4.bb() | F5.bb() | G6.bb() | H7.bb()
+    );
 }

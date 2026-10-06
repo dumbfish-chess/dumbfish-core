@@ -29,6 +29,16 @@ pub fn queen(sq: Square, occupied: Bitboard) -> Bitboard {
     bishop(sq, occupied) | rook(sq, occupied)
 }
 
+/// Squares strictly between `a` and `b`; empty unless they share a rank, file or diagonal.
+pub fn between(a: Square, b: Square) -> Bitboard {
+    BETWEEN[a.index()][b.index()]
+}
+
+/// The whole rank, file or diagonal through `a` and `b`; empty unless they share one.
+pub fn line(a: Square, b: Square) -> Bitboard {
+    LINE[a.index()][b.index()]
+}
+
 /// Builds a `[Bitboard; 64]` at compile time from `|b| attacks of the single-square board b`.
 macro_rules! leaper_table {
     (|$b:ident| $attacks:expr) => {{
@@ -66,6 +76,59 @@ static PAWN: [[Bitboard; 64]; 2] = [
     leaper_table!(|b| Bitboard(b.north_east().0 | b.north_west().0)),
     leaper_table!(|b| Bitboard(b.south_east().0 | b.south_west().0)),
 ];
+
+const DIRECTIONS: [(i8, i8); 8] = [
+    (0, 1),
+    (1, 1),
+    (1, 0),
+    (1, -1),
+    (0, -1),
+    (-1, -1),
+    (-1, 0),
+    (-1, 1),
+];
+
+/// Squares from `from` (exclusive) to the edge of the board.
+const fn ray(from: usize, (df, dr): (i8, i8)) -> u64 {
+    let (mut f, mut r) = ((from % 8) as i8, (from / 8) as i8);
+    let mut bits = 0;
+    loop {
+        (f, r) = (f + df, r + dr);
+        if f < 0 || f > 7 || r < 0 || r > 7 {
+            return bits;
+        }
+        bits |= 1 << (r * 8 + f);
+    }
+}
+
+/// Builds `[from][to]` for every aligned pair, `dir` being the step from `from` towards `to`.
+macro_rules! aligned_table {
+    (|$from:ident, $dir:ident, $to:ident| $value:expr) => {{
+        let mut table = [[Bitboard::EMPTY; 64]; 64];
+        let mut $from = 0;
+        while $from < 64 {
+            let mut d = 0;
+            while d < 8 {
+                let $dir = DIRECTIONS[d];
+                let mut targets = ray($from, $dir);
+                while targets != 0 {
+                    let $to = targets.trailing_zeros() as usize;
+                    table[$from][$to] = Bitboard($value);
+                    targets &= targets - 1;
+                }
+                d += 1;
+            }
+            $from += 1;
+        }
+        table
+    }};
+}
+
+static BETWEEN: [[Bitboard; 64]; 64] =
+    aligned_table!(|from, dir, to| ray(from, dir) & ray(to, (-dir.0, -dir.1)));
+
+static LINE: [[Bitboard; 64]; 64] =
+    aligned_table!(|from, dir, _to| ray(from, dir) | ray(from, (-dir.0, -dir.1)) | 1 << from);
 
 const BISHOP_DIRS: [(i8, i8); 4] = [(1, 1), (1, -1), (-1, 1), (-1, -1)];
 const ROOK_DIRS: [(i8, i8); 4] = [(0, 1), (0, -1), (1, 0), (-1, 0)];
