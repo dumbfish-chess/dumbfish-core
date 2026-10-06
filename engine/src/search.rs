@@ -2,7 +2,7 @@ use std::cmp::Reverse;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use dumbfish_core::{Board, Move, MoveKind, MoveList};
+use dumbfish_core::{Board, Move, MoveKind, MoveList, PieceKind};
 
 use crate::eval;
 use crate::tt::{Bound, Entry, TranspositionTable, score_from_tt, score_to_tt};
@@ -136,6 +136,26 @@ impl Searcher<'_> {
             }
         }
 
+        if depth >= 3
+            && !self.board.in_check()
+            && self.has_pieces()
+            && eval::evaluate(self.board) >= beta
+        {
+            self.board.make_null_move();
+            let score = -self.negamax(depth - 3, ply + 1, -beta, -beta + 1);
+            self.board.unmake_null_move();
+            if self.aborted {
+                return 0;
+            }
+            if score >= beta {
+                return if score >= MATE - MAX_DEPTH as i32 {
+                    beta
+                } else {
+                    score
+                };
+            }
+        }
+
         let mut moves = self.board.legal_moves();
         if moves.is_empty() {
             return if self.board.in_check() { ply - MATE } else { 0 };
@@ -221,6 +241,15 @@ impl Searcher<'_> {
             }
         }
         best
+    }
+
+    /// The side to move has a piece other than pawns and the king, so a null move is unlikely
+    /// to miss a zugzwang.
+    fn has_pieces(&self) -> bool {
+        let us = self.board.side_to_move();
+        let pawns_and_king =
+            self.board.kind_bb(PieceKind::Pawn) | self.board.kind_bb(PieceKind::King);
+        !(self.board.color_bb(us) & !pawns_and_king).is_empty()
     }
 
     /// Polls the clock and the stop flag every 1024 nodes; the node limit is exact.
