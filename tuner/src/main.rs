@@ -63,7 +63,7 @@ struct Dataset {
     blends: Vec<[f64; 3]>,
     offsets: Vec<usize>,
     /// `(feature index, value)` pairs; an index may repeat.
-    features: Vec<(usize, f64)>,
+    features: Vec<(u16, i8)>,
 }
 
 impl Dataset {
@@ -91,7 +91,7 @@ impl Dataset {
             data.blends
                 .push(blend(phase(&board)).map(|b| f64::from(b) / f64::from(MAX_PHASE)));
             for_each_feature(&board, |index, value| {
-                data.features.push((index, f64::from(value)))
+                data.features.push((index as u16, value as i8))
             });
             data.offsets.push(data.features.len());
         }
@@ -102,16 +102,17 @@ impl Dataset {
         self.results.len()
     }
 
-    fn features(&self, i: usize) -> &[(usize, f64)] {
-        &self.features[self.offsets[i]..self.offsets[i + 1]]
+    fn features(&self, i: usize) -> impl Iterator<Item = (usize, f64)> {
+        self.features[self.offsets[i]..self.offsets[i + 1]]
+            .iter()
+            .map(|&(f, value)| (usize::from(f), f64::from(value)))
     }
 
     /// Evaluation of position `i` from white's point of view, in centipawns.
     fn eval(&self, i: usize, weights: &[[f64; 3]]) -> f64 {
         let b = self.blends[i];
         self.features(i)
-            .iter()
-            .map(|&(f, value)| {
+            .map(|(f, value)| {
                 value * (b[0] * weights[f][0] + b[1] * weights[f][1] + b[2] * weights[f][2])
             })
             .sum()
@@ -131,7 +132,7 @@ impl Dataset {
             let s = sigmoid(k * self.eval(i, weights));
             let d = (s - self.results[i]) * s * (1.0 - s) * scale;
             let b = self.blends[i];
-            for &(f, value) in self.features(i) {
+            for (f, value) in self.features(i) {
                 for phase in 0..3 {
                     gradient[f][phase] += d * value * b[phase];
                 }
