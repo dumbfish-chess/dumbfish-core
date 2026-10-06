@@ -131,7 +131,6 @@ fn sliders_match_reference_on_random_boards() {
     };
     for sq in Square::ALL {
         for i in 0..2000 {
-            // Vary density: ~50%, ~25%, ~12% of squares occupied.
             let mut occ = next();
             for _ in 0..i % 3 {
                 occ &= next();
@@ -179,7 +178,6 @@ fn between_and_line_match_reference() {
                     s.file() as i8 - a.file() as i8,
                     s.rank() as i8 - a.rank() as i8,
                 );
-                // Collinear with a and b; the projection onto a->b tells whether s lies strictly between them.
                 if sf * dr == sr * df {
                     expected_line |= s.bb();
                     let t = sf * df + sr * dr;

@@ -49,14 +49,13 @@ fn fen_roundtrip() {
 
 #[test]
 fn fen_normalization() {
-    // No black pawn can take on e3, so the square is dropped.
     let board =
         Board::from_fen("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1").unwrap();
     assert_eq!(
         board.fen(),
-        "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+        "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+        "no black pawn can take on e3"
     );
-    // Move counters are optional.
     assert_eq!(
         Board::from_fen("4k3/8/8/8/8/8/8/4K3 w - -").unwrap().fen(),
         "4k3/8/8/8/8/8/8/4K3 w - - 0 1"

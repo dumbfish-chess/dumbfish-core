@@ -26,7 +26,7 @@ const SUITE: [(&str, &[u64]); 7] = [
         &[6, 264, 9_467, 422_333, 15_833_292, 706_045_033],
     ),
     (
-        // Position 4 with colors swapped: same counts.
+        // Position 4, mirrored
         "r2q1rk1/pP1p2pp/Q4n2/bbp1p3/Np6/1B3NBn/pPPP1PPP/R3K2R b KQ - 0 1",
         &[6, 264, 9_467, 422_333, 15_833_292, 706_045_033],
     ),

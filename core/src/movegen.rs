@@ -68,7 +68,6 @@ impl Board {
         let attacked =
             |sq: Square, occupied: Bitboard| !(self.attackers_to(sq, occupied) & theirs).is_empty();
 
-        // Sliders see through the king's old square, so it cannot step back along a checking ray.
         for to in attacks::king(king) & !ours {
             if !attacked(to, occupied ^ king.bb()) {
                 list.push(Move::new(king, to, MoveKind::Normal));
@@ -79,7 +78,6 @@ impl Board {
             return list;
         }
 
-        // Moves of other pieces must capture or block a checker.
         let evasions = match checkers.is_empty() {
             true => Bitboard::ALL,
             false => attacks::between(king, checkers.lsb()) | checkers,
@@ -134,8 +132,6 @@ impl Board {
                 }
             }
 
-            // Two pawns leave the rank at once, which pin and evasion masks do not model:
-            // check the resulting position directly.
             if let Some(ep) = self.en_passant()
                 && attacks::pawn(us, from).contains(ep)
             {
@@ -152,7 +148,6 @@ impl Board {
                 Color::White => (0, WHITE_KINGSIDE, WHITE_QUEENSIDE),
                 Color::Black => (7, BLACK_KINGSIDE, BLACK_QUEENSIDE),
             };
-            // Castling rights imply the king and rook are on their initial squares.
             let sq = |file| Square::new(file, rank);
             if self.castling() & kingside != 0
                 && (occupied & (sq(5).bb() | sq(6).bb())).is_empty()
@@ -179,7 +174,6 @@ impl Board {
         let theirs = self.color_bb(!color);
         let diagonal = self.pieces(!color, Bishop) | self.pieces(!color, Queen);
         let straight = self.pieces(!color, Rook) | self.pieces(!color, Queen);
-        // Enemy sliders that would attack the king if our pieces were not there.
         let snipers =
             (attacks::bishop(king, theirs) & diagonal) | (attacks::rook(king, theirs) & straight);
 

@@ -151,7 +151,6 @@ fn infinite_waits_for_stop() {
     let mut engine = Engine::start();
     engine.send("position startpos");
     engine.send("go infinite");
-    // Must keep answering while searching and must not send bestmove on its own.
     engine.send("isready");
     let lines = engine.read_until("readyok");
     assert!(!lines.iter().any(|l| l.starts_with("bestmove")));
@@ -209,7 +208,6 @@ fn bad_input_is_reported_and_ignored() {
         4,
         "{lines:?}"
     );
-    // The last valid position, after 1.e4, is still in place.
     engine.send("go depth 2");
     let best = engine.best_move();
     assert!(

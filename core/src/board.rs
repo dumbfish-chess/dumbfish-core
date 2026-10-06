@@ -331,7 +331,6 @@ impl Board {
         }
 
         if let Some(ep) = self.en_passant {
-            // The pawn that just moved two squares, seen from the side to move.
             let (ep_rank, pawn_rank, origin_rank) = match self.side {
                 Color::White => (5, 4, 6),
                 Color::Black => (2, 3, 1),

@@ -17,7 +17,6 @@ fn bench(args: &[&str]) -> u64 {
 
 #[test]
 fn bench_is_deterministic() {
-    // The default depth takes seconds in a debug build; determinism does not depend on depth.
     let nodes = bench(&["4"]);
     assert!(nodes > 0);
     assert_eq!(bench(&["4"]), nodes);

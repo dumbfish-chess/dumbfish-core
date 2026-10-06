@@ -59,8 +59,6 @@ pub fn search(
     (best, searcher.nodes)
 }
 
-// ponytail: no draw detection (repetition, fifty moves), move ordering, TT or quiescence yet;
-// each lands with the real evaluation, measured by bench and SPRT.
 fn evaluate(_board: &Board) -> i32 {
     0
 }
@@ -124,8 +122,8 @@ impl Searcher<'_> {
         best
     }
 
+    /// Polls the clock and the stop flag every 1024 nodes; the node limit is exact.
     fn should_abort(&mut self) -> bool {
-        // The clock and the stop flag are polled every 1024 nodes; the node limit is exact.
         self.aborted = self.aborted
             || self.limits.nodes.is_some_and(|n| self.nodes > n)
             || (self.nodes.is_multiple_of(1024)

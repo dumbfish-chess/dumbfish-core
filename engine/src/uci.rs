@@ -118,7 +118,6 @@ fn go<'a>(
             _ => {}
         }
     }
-    // ponytail: fixed share of the remaining time; real time management comes with the search work.
     if let Some(time) = time
         && limits.deadline.is_none()
     {
@@ -131,7 +130,6 @@ fn go<'a>(
     let mut board = board.clone();
     thread::spawn(move || {
         let (best, _) = search::search(&mut board, &limits, &stop, print_info);
-        // In infinite mode `bestmove` may only follow `stop`.
         while infinite && !stop.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(5));
         }

@@ -47,7 +47,6 @@ impl Bitboard {
         sq
     }
 
-    // Shifts by one step; bits leaving the board are dropped, nothing wraps across files.
     pub const fn north(self) -> Self {
         Self(self.0 << 8)
     }

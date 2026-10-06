@@ -50,7 +50,6 @@ fn move_counts() {
 
 #[test]
 fn double_check_allows_only_king_moves() {
-    // Rook a1 and knight d3 both check; the rook on d7 could take the knight, but that is not enough.
     assert_eq!(
         moves("4k3/3R4/8/8/8/3n4/8/r3K3 w - - 0 1"),
         ["e1d2", "e1e2"]
@@ -77,10 +76,14 @@ fn pinned_piece_stays_on_pin_line() {
 #[test]
 fn en_passant() {
     assert!(has("8/8/8/K2pP3/8/8/8/7k w - d6 0 1", "e5d6"));
-    // Both pawns leave the fifth rank and expose the king to the rook.
-    assert!(!has("8/8/8/K2pP2r/8/8/8/7k w - d6 0 1", "e5d6"));
-    // The pawn that just moved gives check; taking it en passant resolves it.
-    assert!(has("4k3/8/8/3pP3/4K3/8/8/8 w - d6 0 1", "e5d6"));
+    assert!(
+        !has("8/8/8/K2pP2r/8/8/8/7k w - d6 0 1", "e5d6"),
+        "both pawns leave the rank and expose the king"
+    );
+    assert!(
+        has("4k3/8/8/3pP3/4K3/8/8/8 w - d6 0 1", "e5d6"),
+        "en passant captures the checking pawn"
+    );
     let board = Board::from_fen("4k3/8/8/3pP3/4K3/8/8/8 w - d6 0 1").unwrap();
     let ep = board
         .legal_moves()
@@ -97,18 +100,28 @@ fn castling() {
     assert!(has("4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1", "e1c1"));
     assert!(has("r3k2r/8/8/8/8/8/8/4K3 b kq - 0 1", "e8g8"));
     assert!(has("r3k2r/8/8/8/8/8/8/4K3 b kq - 0 1", "e8c8"));
-    // No rights.
-    assert!(!has("4k3/8/8/8/8/8/8/R3K2R w Q - 0 1", "e1g1"));
-    // The king may not pass through an attacked square.
-    assert!(!has("4kr2/8/8/8/8/8/8/R3K2R w KQ - 0 1", "e1g1"));
-    assert!(!has("2r1k3/8/8/8/8/8/8/R3K2R w KQ - 0 1", "e1c1"));
-    // Only the rook passes b1, so an attack there does not matter.
-    assert!(has("1r2k3/8/8/8/8/8/8/R3K2R w KQ - 0 1", "e1c1"));
-    // But it must be empty.
-    assert!(!has("4k3/8/8/8/8/8/8/RN2K2R w KQ - 0 1", "e1c1"));
-    // Not out of check.
+    assert!(!has("4k3/8/8/8/8/8/8/R3K2R w Q - 0 1", "e1g1"), "no right");
+    assert!(
+        !has("4kr2/8/8/8/8/8/8/R3K2R w KQ - 0 1", "e1g1"),
+        "king passes an attacked square"
+    );
+    assert!(
+        !has("2r1k3/8/8/8/8/8/8/R3K2R w KQ - 0 1", "e1c1"),
+        "king lands on an attacked square"
+    );
+    assert!(
+        has("1r2k3/8/8/8/8/8/8/R3K2R w KQ - 0 1", "e1c1"),
+        "only the rook passes b1"
+    );
+    assert!(
+        !has("4k3/8/8/8/8/8/8/RN2K2R w KQ - 0 1", "e1c1"),
+        "b1 is occupied"
+    );
     let in_check = moves("4k3/4r3/8/8/8/8/8/R3K2R w KQ - 0 1");
-    assert!(!in_check.iter().any(|m| m == "e1g1" || m == "e1c1"));
+    assert!(
+        !in_check.iter().any(|m| m == "e1g1" || m == "e1c1"),
+        "castling out of check"
+    );
 }
 
 #[test]
