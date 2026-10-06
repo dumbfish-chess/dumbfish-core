@@ -8,7 +8,9 @@ GUI живёт в другом репозитории и общается с д�
 - `core/` (`dumbfish-core`) — битборды, таблицы атак, Board, FEN, Zobrist, генерация ходов, perft.
 - `engine/` (`dumbfish`) — UCI-бинарник: поиск, оценка, bench.
 - `tuner/` (`dumbfish-tuner`) — подбор весов оценки.
-- `tools/` (`dumbfish-tools`) — вспомогательные утилиты: `magics` (генерация magic-чисел для `core/src/attacks.rs`).
+- `tools/` (`dumbfish-tools`) — вспомогательные утилиты:
+  - `magics` — генерация magic-чисел для `core/src/attacks.rs`;
+  - `perft <depth> [fen]` — perft с разбивкой по ходам из корня (для поиска расхождений с эталонным движком).
 
 ## Правила
 
@@ -20,6 +22,11 @@ GUI живёт в другом репозитории и общается с д�
   - Position 4: `r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1`
   - Position 5: `rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8`
   - Position 6: `r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - - 0 10`
+
+  Полный набор (с ожидаемыми числами) — `core/tests/perft.rs`, запуск:
+  ```sh
+  cargo test --release -p dumbfish-core --test perft -- --include-ignored
+  ```
 - Изменения поиска и оценки сопровождаются счётчиком узлов `bench` (в сообщении коммита) и результатом SPRT.
   Эвристики не добавляются на интуиции — только с подтверждением SPRT.
 - Оценка — линейная функция вектора признаков и весов по фазам. Веса хранятся в данных, не в коде.
