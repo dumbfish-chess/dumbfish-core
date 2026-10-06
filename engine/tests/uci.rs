@@ -347,3 +347,65 @@ fn skill_level_option() {
         "{best}"
     );
 }
+
+#[test]
+fn style_options() {
+    let mut engine = Engine::start();
+    engine.send("uci");
+    let lines = engine.read_until("uciok");
+    for expected in [
+        "option name Style type combo default balanced var balanced var aggressive",
+        "option name Style King Attack type spin default 100 min 0 max 300",
+        "option name Contempt type spin default 0 min -200 max 200",
+    ] {
+        assert!(
+            lines.iter().any(|l| l.starts_with(expected)),
+            "{expected:?} in {lines:?}"
+        );
+    }
+    for command in [
+        "setoption name Style value aggressive",
+        "setoption name Style King Attack value 200",
+        "setoption name Style value reckless",
+        "setoption name Style Mobility value -1",
+        "setoption name Contempt value 500",
+    ] {
+        engine.send(command);
+    }
+    engine.send("isready");
+    let lines = engine.read_until("readyok");
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|l| l.starts_with("info string"))
+            .count(),
+        3,
+        "{lines:?}"
+    );
+
+    engine.send("eval");
+    let lines = engine.read_until("total:");
+    let percent = |group: &str| {
+        let line = lines.iter().find(|l| l.starts_with(group)).unwrap();
+        line.split_whitespace().nth(2).unwrap().to_string()
+    };
+    assert_eq!(
+        percent("king_attack"),
+        "200%",
+        "manual value overrides the preset"
+    );
+    assert_eq!(percent("mobility"), "120%", "from the aggressive preset");
+}
+
+#[test]
+fn contempt_decides_about_repetition() {
+    let position = "position startpos moves g1f3 g8f6 f3g1 f6g8 g1f3 g8f6 f3g1";
+    for (contempt, repeats) in [(-200, true), (200, false)] {
+        let mut engine = Engine::start();
+        engine.send(&format!("setoption name Contempt value {contempt}"));
+        engine.send(position);
+        engine.send("go depth 3");
+        let best = engine.best_move();
+        assert_eq!(best == "f6g8", repeats, "contempt {contempt}: {best}");
+    }
+}

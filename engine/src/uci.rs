@@ -9,6 +9,7 @@ use dumbfish_core::{Board, Color};
 use crate::eval;
 use crate::search::{self, Iteration, Limits, MATE, MAX_DEPTH};
 use crate::skill::{self, Skill};
+use crate::style::{self, GROUPS, PRESETS, Style};
 use crate::tt::{self, TranspositionTable};
 
 const MOVE_OVERHEAD: Duration = Duration::from_millis(30);
@@ -19,6 +20,7 @@ pub fn run() {
         board: Board::startpos(),
         tt: Some(TranspositionTable::new(tt::DEFAULT_MEGABYTES)),
         skill_level: skill::MAX_LEVEL,
+        style: PRESETS[0].style,
         stop: Arc::new(AtomicBool::new(false)),
         worker: None,
     };
@@ -38,6 +40,25 @@ pub fn run() {
                 println!(
                     "option name Skill Level type spin default {0} min 0 max {0}",
                     skill::MAX_LEVEL
+                );
+                let presets: Vec<_> = PRESETS.iter().map(|p| format!("var {}", p.name)).collect();
+                println!(
+                    "option name Style type combo default {} {}",
+                    PRESETS[0].name,
+                    presets.join(" ")
+                );
+                for (group, default) in GROUPS.iter().zip(PRESETS[0].style.multipliers) {
+                    println!(
+                        "option name {} type spin default {default} min 0 max {}",
+                        group_option(group),
+                        style::MAX_MULTIPLIER
+                    );
+                }
+                println!(
+                    "option name Contempt type spin default {} min {} max {}",
+                    PRESETS[0].style.contempt,
+                    -style::MAX_CONTEMPT,
+                    style::MAX_CONTEMPT
                 );
                 println!("uciok");
             }
@@ -66,7 +87,7 @@ pub fn run() {
             }
             Some("eval") => {
                 engine.wait();
-                println!("{}", eval::explain(&engine.board));
+                println!("{}", eval::explain(&engine.board, &engine.style));
             }
             Some("stop") => engine.finish(),
             Some("quit") => break,
@@ -82,6 +103,8 @@ struct Engine {
     /// Moves into the search thread for the duration of a search.
     tt: Option<TranspositionTable>,
     skill_level: u8,
+    /// Set by `Style`; the group options and `Contempt` then override single values.
+    style: Style,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<TranspositionTable>>,
 }
@@ -113,7 +136,16 @@ impl Engine {
         }
         let name: Vec<_> = tokens.by_ref().take_while(|&t| t != "value").collect();
         let value: Vec<_> = tokens.collect();
-        match (name.join(" ").to_lowercase().as_str(), &value[..]) {
+        let name = name.join(" ").to_lowercase();
+        if let Some(group) = GROUPS
+            .iter()
+            .position(|g| group_option(g).to_lowercase() == name)
+        {
+            let percent = parse_in(&value, 0, style::MAX_MULTIPLIER)?;
+            self.style.multipliers[group] = percent;
+            return Ok(());
+        }
+        match (name.as_str(), &value[..]) {
             ("hash", [megabytes]) => match megabytes.parse::<usize>() {
                 Ok(mb) if (1..=tt::MAX_MEGABYTES).contains(&mb) => {
                     self.tt = Some(TranspositionTable::new(mb));
@@ -134,6 +166,18 @@ impl Engine {
                     skill::MAX_LEVEL
                 )),
             },
+            ("style", [preset]) => {
+                let preset = PRESETS
+                    .iter()
+                    .find(|p| p.name.eq_ignore_ascii_case(preset))
+                    .ok_or_else(|| format!("unknown Style {preset:?}"))?;
+                self.style = preset.style;
+                Ok(())
+            }
+            ("contempt", _) => {
+                self.style.contempt = parse_in(&value, -style::MAX_CONTEMPT, style::MAX_CONTEMPT)?;
+                Ok(())
+            }
             (name, _) => Err(format!("unknown option or value: {name:?}")),
         }
     }
@@ -148,6 +192,7 @@ impl Engine {
             level: self.skill_level,
             seed,
         });
+        limits.style = self.style;
         self.stop.store(false, Ordering::Relaxed);
         let stop = Arc::clone(&self.stop);
         let mut board = self.board.clone();
@@ -163,6 +208,27 @@ impl Engine {
             );
             tt
         }));
+    }
+}
+
+/// UCI name of the multiplier option for a style group: `king_attack` -> `Style King Attack`.
+fn group_option(group: &str) -> String {
+    let words: Vec<_> = group
+        .split('_')
+        .map(|w| w[..1].to_uppercase() + &w[1..])
+        .collect();
+    format!("Style {}", words.join(" "))
+}
+
+/// The single value of an option, which must be in `min..=max`.
+fn parse_in(value: &[&str], min: i32, max: i32) -> Result<i32, String> {
+    match value {
+        [v] => v
+            .parse()
+            .ok()
+            .filter(|v| (min..=max).contains(v))
+            .ok_or_else(|| format!("expected {min}..={max}, got {v:?}")),
+        _ => Err(format!("expected one value in {min}..={max}")),
     }
 }
 

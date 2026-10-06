@@ -1,7 +1,8 @@
 use dumbfish::eval::{
-    FEATURE_COUNT, FEATURE_NAMES, MAX_PHASE, blend, evaluate, evaluate_with, explain,
-    for_each_feature, format_weights, parse_weights, phase,
+    FEATURE_COUNT, FEATURE_NAMES, MAX_PHASE, blend, evaluate, evaluate_styled, evaluate_with,
+    explain, for_each_feature, format_weights, parse_weights, phase,
 };
+use dumbfish::style::{GROUPS, PRESETS, Style, parse_presets};
 use dumbfish_core::{Board, Color, Piece, PieceKind, Square};
 
 const POSITIONS: [&str; 9] = [
@@ -168,9 +169,10 @@ fn weights_format() {
 #[test]
 fn explain_lists_non_zero_features() {
     let board = Board::from_fen("4k3/8/8/8/8/8/8/3QK3 b - - 0 1").unwrap();
-    let text = explain(&board);
+    let text = explain(&board, &Style::default());
     let lines: Vec<_> = text.lines().collect();
-    let names: Vec<_> = lines[1..lines.len() - 2]
+    let groups = lines.iter().position(|l| l.starts_with("group")).unwrap();
+    let names: Vec<_> = lines[1..groups]
         .iter()
         .map(|l| l.split_whitespace().next().unwrap())
         .collect();
@@ -548,4 +550,83 @@ fn king_safety_matches_reference() {
         }
     }
     assert!(checked > 500, "{checked}");
+}
+
+#[test]
+fn explain_scales_groups_by_style() {
+    let board = Board::from_fen("4k3/8/8/8/8/8/8/3QK3 b - - 0 1").unwrap();
+    let mut style = Style::default();
+    style.multipliers[0] = 50;
+    let text = explain(&board, &style);
+    let material = text.lines().find(|l| l.starts_with("material")).unwrap();
+    let fields: Vec<_> = material.split_whitespace().collect();
+    let tuned: f64 = fields[1].parse().unwrap();
+    assert_eq!(fields[2], "50%");
+    assert_eq!(fields[3], format!("{:.2}", tuned / 2.0));
+    let stm = evaluate_styled(&board, &style);
+    assert!(text.ends_with(&format!(
+        "total: {} cp for white, {stm} cp for the side to move",
+        -stm
+    )));
+}
+
+#[test]
+fn default_style_is_the_plain_evaluation() {
+    assert_eq!(PRESETS[0].style, Style::default());
+    for fen in POSITIONS {
+        let board = Board::from_fen(fen).unwrap();
+        assert_eq!(
+            evaluate_styled(&board, &Style::default()),
+            evaluate(&board),
+            "{fen}"
+        );
+    }
+}
+
+#[test]
+fn style_scales_groups() {
+    let board = Board::from_fen(POSITIONS[1]).unwrap();
+    let only = |group: usize, percent: i32| {
+        let mut style = Style {
+            multipliers: [0; 6],
+            contempt: 0,
+        };
+        style.multipliers[group] = percent;
+        evaluate_styled(&board, &style)
+    };
+    let mut total = 0;
+    for (group, name) in GROUPS.iter().enumerate() {
+        assert_eq!(only(group, 0), 0);
+        assert!(
+            (only(group, 200) - 2 * only(group, 100)).abs() <= 1,
+            "{name}"
+        );
+        total += only(group, 100);
+    }
+    assert!(
+        (total - evaluate(&board)).abs() <= GROUPS.len() as i32,
+        "groups add up"
+    );
+}
+
+#[test]
+fn presets_format() {
+    assert!(PRESETS.len() >= 2);
+    let header = "# name m p pa mo ka kd contempt\n";
+    assert_eq!(
+        parse_presets(&format!("{header}a 1 2 3 4 5 6 -7\n")).unwrap()[0]
+            .style
+            .contempt,
+        -7
+    );
+    for (bad, error) in [
+        ("", "no presets"),
+        ("a 1 2 3 4 5 6\n", "expected"),
+        ("a 1 2 3 4 5 301 0\n", "not in"),
+        ("a 1 2 3 4 5 6 201\n", "not in"),
+        ("a 1 2 3 4 5 6 0\na 1 2 3 4 5 6 0\n", "duplicate"),
+    ] {
+        let message = parse_presets(bad).err().unwrap();
+        assert!(message.contains(error), "{message:?} for {bad:?}");
+    }
 }

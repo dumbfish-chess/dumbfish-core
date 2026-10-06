@@ -25,6 +25,8 @@ use std::sync::LazyLock;
 
 use dumbfish_core::{Bitboard, Board, Color, PieceKind, Square, attacks};
 
+use crate::style::{GROUPS, Style};
+
 /// Phase of a position with all pieces: knights and bishops count 1, rooks 2, queens 4.
 pub const MAX_PHASE: i32 = 24;
 
@@ -52,6 +54,18 @@ const SHIELD_NEAR: usize = KING_ATTACKERS + 5;
 const SHIELD_FAR: usize = SHIELD_NEAR + 1;
 const KING_OPEN_FILES: usize = SHIELD_FAR + 1;
 pub const FEATURE_COUNT: usize = KING_OPEN_FILES + 1;
+
+/// Index in `style::GROUPS` of the group a feature belongs to.
+pub fn group(index: usize) -> usize {
+    match index {
+        i if i < PIECE_SQUARE => 0,
+        i if i < DOUBLED => 1,
+        i if i < MOBILITY => 2,
+        i if i < KING_ATTACK => 3,
+        i if i < SHIELD_NEAR => 4,
+        _ => 5,
+    }
+}
 
 /// Feature names by index.
 pub static FEATURE_NAMES: LazyLock<Vec<String>> = LazyLock::new(|| {
@@ -288,27 +302,46 @@ pub fn blend(phase: i32) -> [i32; 3] {
 
 /// Centipawns from the side to move's point of view.
 pub fn evaluate(board: &Board) -> i32 {
-    evaluate_with(board, &WEIGHTS)
+    evaluate_full(board, &WEIGHTS, &Style::default())
 }
 
 /// `evaluate` with the given weights instead of the shipped ones.
 pub fn evaluate_with(board: &Board, weights: &Weights) -> i32 {
-    let blend = blend(phase(board));
-    let mut white = 0;
-    for_each_feature(board, |index, value| {
-        white += value * dot(blend, &weights[index])
-    });
-    white /= MAX_PHASE;
+    evaluate_full(board, weights, &Style::default())
+}
+
+/// `evaluate` with each feature group scaled by the style.
+pub fn evaluate_styled(board: &Board, style: &Style) -> i32 {
+    evaluate_full(board, &WEIGHTS, style)
+}
+
+fn evaluate_full(board: &Board, weights: &Weights, style: &Style) -> i32 {
+    let white = group_sums(board, weights)
+        .iter()
+        .zip(style.multipliers)
+        .map(|(sum, percent)| sum * percent)
+        .sum::<i32>()
+        / (100 * MAX_PHASE);
     match board.side_to_move() {
         Color::White => white,
         Color::Black => -white,
     }
 }
 
+/// Per group, white's point of view, in centipawns times `MAX_PHASE`.
+fn group_sums(board: &Board, weights: &Weights) -> [i32; GROUPS.len()] {
+    let blend = blend(phase(board));
+    let mut sums = [0; GROUPS.len()];
+    for_each_feature(board, |index, value| {
+        sums[group(index)] += value * dot(blend, &weights[index])
+    });
+    sums
+}
+
 /// Table for the `eval` command: every non-zero feature's value, its contribution with the
-/// weights of each phase, and its actual contribution in this position (white's point of view,
-/// centipawns).
-pub fn explain(board: &Board) -> String {
+/// weights of each phase, and its actual contribution in this position; then the groups scaled
+/// by the style (white's point of view, centipawns).
+pub fn explain(board: &Board, style: &Style) -> String {
     let phase = phase(board);
     let blend = blend(phase);
     let mut values = vec![0; FEATURE_COUNT];
@@ -329,13 +362,33 @@ pub fn explain(board: &Board) -> String {
         )
         .unwrap();
     }
+    writeln!(
+        out,
+        "{:<20}{:>10}{:>8}{:>10}",
+        "group", "tuned", "style", "scaled"
+    )
+    .unwrap();
+    for ((name, sum), percent) in GROUPS
+        .iter()
+        .zip(group_sums(board, &WEIGHTS))
+        .zip(style.multipliers)
+    {
+        let tuned = f64::from(sum) / f64::from(MAX_PHASE);
+        let scaled = tuned * f64::from(percent) / 100.0;
+        writeln!(
+            out,
+            "{name:<20}{tuned:>10.2}{:>8}{scaled:>10.2}",
+            format!("{percent}%")
+        )
+        .unwrap();
+    }
     let [opening, middlegame, endgame] = blend;
     writeln!(
         out,
         "phase {phase}/{MAX_PHASE}: opening {opening}/{MAX_PHASE}, middlegame {middlegame}/{MAX_PHASE}, endgame {endgame}/{MAX_PHASE}"
     )
     .unwrap();
-    let stm = evaluate(board);
+    let stm = evaluate_styled(board, style);
     let white = match board.side_to_move() {
         Color::White => stm,
         Color::Black => -stm,

@@ -6,6 +6,7 @@ use dumbfish_core::{Board, Move, MoveKind, MoveList, PieceKind};
 
 use crate::eval;
 use crate::skill::{MAX_LEVEL, Skill};
+use crate::style::Style;
 use crate::tt::{Bound, Entry, TranspositionTable, score_from_tt, score_to_tt};
 
 pub const MAX_DEPTH: u32 = 64;
@@ -20,6 +21,7 @@ pub struct Limits {
     pub deadline: Option<Instant>,
     /// Below `MAX_LEVEL`, adds the skill's node budget and picks the move with its noise.
     pub skill: Option<Skill>,
+    pub style: Style,
 }
 
 /// A finished iteration of iterative deepening.
@@ -159,8 +161,11 @@ impl Searcher<'_> {
 
     fn negamax(&mut self, depth: u32, ply: i32, mut alpha: i32, beta: i32) -> i32 {
         self.nodes += 1;
-        if self.should_abort() || self.board.is_repetition() {
+        if self.should_abort() {
             return 0;
+        }
+        if self.board.is_repetition() {
+            return self.draw_score(ply);
         }
         let key = self.board.hash();
         let entry = self.tt.probe(key);
@@ -176,11 +181,7 @@ impl Searcher<'_> {
             }
         }
 
-        if depth >= 3
-            && !self.board.in_check()
-            && self.has_pieces()
-            && eval::evaluate(self.board) >= beta
-        {
+        if depth >= 3 && !self.board.in_check() && self.has_pieces() && self.evaluate() >= beta {
             self.board.make_null_move();
             let score = -self.negamax(depth - 3, ply + 1, -beta, -beta + 1);
             self.board.unmake_null_move();
@@ -198,10 +199,14 @@ impl Searcher<'_> {
 
         let mut moves = self.board.legal_moves();
         if moves.is_empty() {
-            return if self.board.in_check() { ply - MATE } else { 0 };
+            return if self.board.in_check() {
+                ply - MATE
+            } else {
+                self.draw_score(ply)
+            };
         }
         if self.board.halfmove_clock() >= 100 {
-            return 0;
+            return self.draw_score(ply);
         }
         if depth == 0 {
             return self.quiescence(alpha, beta);
@@ -254,7 +259,7 @@ impl Searcher<'_> {
         if self.should_abort() {
             return 0;
         }
-        let stand_pat = eval::evaluate(self.board);
+        let stand_pat = self.evaluate();
         if stand_pat >= beta {
             return stand_pat;
         }
@@ -290,6 +295,19 @@ impl Searcher<'_> {
         let pawns_and_king =
             self.board.kind_bb(PieceKind::Pawn) | self.board.kind_bb(PieceKind::King);
         !(self.board.color_bb(us) & !pawns_and_king).is_empty()
+    }
+
+    fn evaluate(&self) -> i32 {
+        eval::evaluate_styled(self.board, &self.limits.style)
+    }
+
+    /// A draw costs the side to move at the root `contempt`, and gains its opponent as much.
+    fn draw_score(&self, ply: i32) -> i32 {
+        if ply % 2 == 0 {
+            -self.limits.style.contempt
+        } else {
+            self.limits.style.contempt
+        }
     }
 
     /// Polls the clock and the stop flag every 1024 nodes; the node limit is exact.

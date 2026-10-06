@@ -1,0 +1,6 @@
+# preset       material  positional  pawns  mobility  king_attack  king_defense  contempt
+balanced            100         100    100       100          100           100         0
+aggressive           90         100     90       120          150            80        30
+defensive           100         100    110        90           70           150       -20
+positional           90         130    130       110           90           110         0
+materialistic       130          90     90        90           90           100         0
