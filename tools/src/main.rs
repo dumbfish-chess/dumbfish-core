@@ -1,16 +1,60 @@
 use std::process::ExitCode;
+use std::time::Instant;
 
-use dumbfish_core::{Bitboard, Square};
+use dumbfish_core::board::STARTPOS;
+use dumbfish_core::perft::divide;
+use dumbfish_core::{Bitboard, Board, Square};
+
+const USAGE: &str = "usage:
+  dumbfish-tools magics
+  dumbfish-tools perft <depth> [fen]";
 
 fn main() -> ExitCode {
-    match std::env::args().nth(1).as_deref() {
-        Some("magics") => magics(),
-        _ => {
-            eprintln!("usage: dumbfish-tools magics");
-            return ExitCode::FAILURE;
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let result = match args.first().map(String::as_str) {
+        Some("magics") => {
+            magics();
+            Ok(())
+        }
+        Some("perft") => perft(&args[1..]),
+        _ => Err(USAGE.to_string()),
+    };
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("{e}");
+            ExitCode::FAILURE
         }
     }
-    ExitCode::SUCCESS
+}
+
+/// Prints leaf counts per root move, sorted, then the total.
+fn perft(args: &[String]) -> Result<(), String> {
+    let depth = args.first().and_then(|d| d.parse().ok()).ok_or(USAGE)?;
+    let fen = if args.len() > 1 {
+        args[1..].join(" ")
+    } else {
+        STARTPOS.to_string()
+    };
+    let mut board = Board::from_fen(&fen)?;
+
+    let start = Instant::now();
+    let mut split: Vec<_> = divide(&mut board, depth)
+        .into_iter()
+        .map(|(mv, n)| (mv.to_string(), n))
+        .collect();
+    let elapsed = start.elapsed();
+    split.sort();
+    for (mv, nodes) in &split {
+        println!("{mv}: {nodes}");
+    }
+    let total: u64 = split.iter().map(|(_, n)| n).sum();
+    println!(
+        "\nnodes {total} time {}ms nps {}",
+        elapsed.as_millis(),
+        (total as f64 / elapsed.as_secs_f64()) as u64
+    );
+    Ok(())
 }
 
 /// Prints `BISHOP_MAGICS` and `ROOK_MAGICS` for `core/src/attacks.rs`.
