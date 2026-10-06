@@ -10,7 +10,11 @@ GUI живёт в другом репозитории и общается с д�
   на stdin/stdout; `dumbfish bench [depth]` печатает `N nodes M nps` (`N` — сигнатура, одинаковая на любой машине).
   Веса оценки — `engine/weights.txt`. UCI-опции: `Hash` (МБ, по умолчанию 16), `Skill Level` (0–20, 20 — полная
   сила: ниже — бюджет узлов `256 << (level / 2)` и шум до `15 * (20 - level)` cp при выборе хода из корня).
-  Нестандартная команда `eval` — вклад каждого ненулевого признака.
+  Стиль: `Style` (пресет из `engine/styles.txt`: balanced, aggressive, defensive, positional, materialistic)
+  задаёт множители групп признаков и `Contempt`; затем `Style Material`, `Style Positional`, `Style Pawns`,
+  `Style Mobility`, `Style King Attack`, `Style King Defense` (0–300 %) и `Contempt` (−200…200 cp, цена ничьей
+  для стороны, ходящей в корне) переопределяют отдельные значения. Нестандартная команда `eval` — вклад каждого
+  ненулевого признака и групп с учётом стиля.
 - `tuner/` (`dumbfish-tuner`) — подбор весов оценки методом Texel: `dumbfish-tuner <dataset.epd> <weights.txt> [epochs]`
   переписывает файл весов. Датасет — `quiet-labeled.v7.epd` (Zurichess, 1.4M позиций с результатами партий):
   ```sh
