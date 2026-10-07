@@ -31,6 +31,8 @@ pub struct Limits {
     pub deadline: Deadline,
     /// No new iteration starts after this.
     pub soft_deadline: Deadline,
+    /// Root moves to choose from; all legal moves if empty.
+    pub searchmoves: Vec<Move>,
     /// Below `MAX_LEVEL`, adds the skill's node budget and picks the move with its noise; the
     /// search then runs on one thread.
     pub skill: Option<Skill>,
@@ -89,8 +91,7 @@ pub fn search(
             let mut board = board.clone();
             let (finished, total_nodes) = (&finished, &total_nodes);
             scope.spawn(move || {
-                let mut moves = board.legal_moves();
-                order_moves(&board, &mut moves);
+                let mut moves = root_moves(&board, limits);
                 let mut searcher =
                     Searcher::new(&mut board, limits, None, [stop, finished], tt, total_nodes);
                 for depth in (1 + helper % 2) as u32..=max_depth {
@@ -132,8 +133,7 @@ fn main_search(
     start: Instant,
     on_iteration: &mut impl FnMut(&Iteration),
 ) -> Option<Move> {
-    let mut moves = searcher.board.legal_moves();
-    order_moves(searcher.board, &mut moves);
+    let mut moves = root_moves(searcher.board, searcher.limits);
     let mut best = moves.first().copied();
     let lines = searcher.limits.multipv.clamp(1, moves.len().max(1));
     let mut scores: Vec<(Move, i32)> = Vec::new();
@@ -202,6 +202,23 @@ fn main_search(
         best = skill.choose(&scores).or(best);
     }
     best
+}
+
+/// The legal moves in search order, only those in `limits.searchmoves` if it names any legal
+/// move.
+fn root_moves(board: &Board, limits: &Limits) -> MoveList {
+    let legal = board.legal_moves();
+    let mut moves = MoveList::default();
+    for &mv in legal.iter() {
+        if limits.searchmoves.contains(&mv) {
+            moves.push(mv);
+        }
+    }
+    if moves.is_empty() {
+        moves = legal;
+    }
+    order_moves(board, &mut moves);
+    moves
 }
 
 /// Moves `mv` to the front, keeping the order of the others.

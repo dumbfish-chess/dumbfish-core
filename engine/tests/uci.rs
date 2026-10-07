@@ -541,3 +541,12 @@ fn stop_ends_pondering() {
         "{best}"
     );
 }
+
+#[test]
+fn searchmoves_restricts_the_root() {
+    let mut engine = Engine::start();
+    engine.send("position startpos");
+    engine.send("go depth 4 searchmoves a2a3 h2h3 e2e5");
+    let best = engine.best_move();
+    assert!(best == "a2a3" || best == "h2h3", "{best}");
+}

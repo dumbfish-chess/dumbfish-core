@@ -343,11 +343,13 @@ impl Budget {
     }
 }
 
-fn parse_go<'a>(mut tokens: impl Iterator<Item = &'a str>, board: &Board) -> Go {
+fn parse_go<'a>(tokens: impl Iterator<Item = &'a str>, board: &Board) -> Go {
     let us = board.side_to_move();
+    let legal = board.legal_moves();
     let mut limits = Limits::default();
     let (mut time, mut inc, mut moves_to_go, mut movetime) = (None, Duration::ZERO, None, None);
     let (mut infinite, mut ponder) = (false, false);
+    let mut tokens = tokens.peekable();
     while let Some(token) = tokens.next() {
         let mut number = || tokens.next().and_then(|v| v.parse::<u64>().ok());
         match token {
@@ -363,6 +365,15 @@ fn parse_go<'a>(mut tokens: impl Iterator<Item = &'a str>, board: &Board) -> Go 
             "movestogo" => moves_to_go = number().filter(|&n| n > 0),
             "infinite" => infinite = true,
             "ponder" => ponder = true,
+            "searchmoves" => {
+                while let Some(mv) = tokens
+                    .peek()
+                    .and_then(|t| legal.iter().find(|m| m.to_string() == *t))
+                {
+                    limits.searchmoves.push(*mv);
+                    tokens.next();
+                }
+            }
             _ => {}
         }
     }
