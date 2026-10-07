@@ -59,7 +59,7 @@ fn feature_names_are_unique() {
     assert_eq!(FEATURE_NAMES[5], "pawn_a1");
     assert_eq!(FEATURE_NAMES[5 + 6 * 64 - 1], "king_h8");
     assert_eq!(FEATURE_NAMES[5 + 6 * 64 + 3 + 5], "passed_7");
-    assert_eq!(FEATURE_NAMES[FEATURE_COUNT - 1], "rook_semi_open_file");
+    assert_eq!(FEATURE_NAMES[FEATURE_COUNT - 1], "hanging");
 }
 
 #[test]
@@ -666,9 +666,8 @@ fn reference_pieces(board: &Board) -> Vec<(String, i32)> {
     values.into_iter().filter(|&(_, v)| v != 0).collect()
 }
 
-#[test]
-fn piece_features_match_reference() {
-    let names = ["bishop_pair", "rook_open_file", "rook_semi_open_file"];
+/// Compares the features `names` with `reference` along random games from `POSITIONS`.
+fn assert_matches_reference(names: &[&str], reference: fn(&Board) -> Vec<(String, i32)>) {
     let mut state = 0xB15B_u64;
     let mut next = move || {
         state ^= state >> 12;
@@ -682,13 +681,12 @@ fn piece_features_match_reference() {
         for _ in 0..120 {
             let mut values = vec![0; FEATURE_COUNT];
             for_each_feature(&board, |index, value| values[index] += value);
-            let found: Vec<_> = (0..FEATURE_COUNT)
+            let mut found: Vec<_> = (0..FEATURE_COUNT)
                 .filter(|&i| values[i] != 0 && names.contains(&FEATURE_NAMES[i].as_str()))
                 .map(|i| (FEATURE_NAMES[i].clone(), values[i]))
                 .collect();
-            let mut found = found;
             found.sort();
-            assert_eq!(found, reference_pieces(&board), "{}", board.fen());
+            assert_eq!(found, reference(&board), "{}", board.fen());
             checked += 1;
             let moves = board.legal_moves();
             if moves.is_empty() {
@@ -698,6 +696,89 @@ fn piece_features_match_reference() {
         }
     }
     assert!(checked > 500, "{checked}");
+}
+
+#[test]
+fn piece_features_match_reference() {
+    assert_matches_reference(
+        &["bishop_pair", "rook_open_file", "rook_semi_open_file"],
+        reference_pieces,
+    );
+}
+
+/// Whether a piece of `color` attacks `target`, checked piece by piece.
+fn reference_attacked_by(board: &Board, color: Color, target: Square, kinds: &[PieceKind]) -> bool {
+    Square::ALL.into_iter().any(|sq| {
+        let Some(piece) = board
+            .piece_on(sq)
+            .filter(|p| p.color == color && kinds.contains(&p.kind))
+        else {
+            return false;
+        };
+        let (df, dr) = (
+            target.file() as i32 - sq.file() as i32,
+            target.rank() as i32 - sq.rank() as i32,
+        );
+        match piece.kind {
+            PieceKind::Pawn => df.abs() == 1 && dr == if color == Color::White { 1 } else { -1 },
+            PieceKind::King => df.abs() <= 1 && dr.abs() <= 1 && (df, dr) != (0, 0),
+            _ => reference_attacks(board, sq).contains(&target),
+        }
+    })
+}
+
+/// Threat features recomputed square by square.
+fn reference_threats(board: &Board) -> Vec<(String, i32)> {
+    use PieceKind::*;
+    let mut values = std::collections::BTreeMap::<String, i32>::new();
+    for (color, sign) in [(Color::White, 1), (Color::Black, -1)] {
+        for sq in Square::ALL {
+            let Some(piece) = board.piece_on(sq).filter(|p| p.color == !color) else {
+                continue;
+            };
+            if matches!(piece.kind, Pawn | King) {
+                continue;
+            }
+            let by = |kinds: &[PieceKind]| reference_attacked_by(board, color, sq, kinds);
+            let mut hit = |name: &str| *values.entry(name.into()).or_default() += sign;
+            if by(&[Pawn]) {
+                hit("threat_by_pawn");
+            }
+            if matches!(piece.kind, Rook | Queen) && by(&[Knight, Bishop]) {
+                hit("threat_by_minor");
+            }
+            if piece.kind == Queen && by(&[Rook]) {
+                hit("threat_by_rook");
+            }
+            if by(&PieceKind::ALL) && !reference_attacked_by(board, !color, sq, &PieceKind::ALL) {
+                hit("hanging");
+            }
+        }
+    }
+    values.into_iter().filter(|&(_, v)| v != 0).collect()
+}
+
+#[test]
+fn threat_features_match_reference() {
+    assert_matches_reference(
+        &[
+            "threat_by_pawn",
+            "threat_by_minor",
+            "threat_by_rook",
+            "hanging",
+        ],
+        reference_threats,
+    );
+}
+
+#[test]
+fn threat_examples() {
+    let board = Board::from_fen("8/5k2/2qpr3/3P4/8/5N2/8/R3K3 w - - 0 1").unwrap();
+    assert_eq!(
+        reference_threats(&board),
+        [("hanging", 1), ("threat_by_pawn", 2)].map(|(n, v)| (n.to_string(), v)),
+        "the pawn forks the queen and the rook; only the rook is defended"
+    );
 }
 
 #[test]
@@ -712,4 +793,5 @@ fn feature_groups() {
     assert_eq!(group_of("rook_open_file"), "mobility");
     assert_eq!(group_of("king_attackers_4"), "king_attack");
     assert_eq!(group_of("king_open_files"), "king_defense");
+    assert_eq!(group_of("hanging"), "mobility");
 }

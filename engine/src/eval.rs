@@ -20,7 +20,10 @@
 //!   squares in front of the king on its file and the adjacent ones), `king_open_files` (those
 //!   files without own pawns);
 //! - `bishop_pair` (two bishops or more), `rook_open_file` and `rook_semi_open_file` (per rook on
-//!   a file without pawns, or without own pawns only).
+//!   a file without pawns, or without own pawns only);
+//! - threats to enemy pieces other than pawns: `threat_by_pawn` (attacked by a pawn),
+//!   `threat_by_minor` (rooks and queens attacked by a knight or bishop), `threat_by_rook`
+//!   (queens attacked by a rook), `hanging` (attacked and not defended).
 
 use std::fmt::Write as _;
 use std::sync::LazyLock;
@@ -58,13 +61,18 @@ const KING_OPEN_FILES: usize = SHIELD_FAR + 1;
 const BISHOP_PAIR: usize = KING_OPEN_FILES + 1;
 const ROOK_OPEN_FILE: usize = BISHOP_PAIR + 1;
 const ROOK_SEMI_OPEN_FILE: usize = ROOK_OPEN_FILE + 1;
-pub const FEATURE_COUNT: usize = ROOK_SEMI_OPEN_FILE + 1;
+const THREAT_BY_PAWN: usize = ROOK_SEMI_OPEN_FILE + 1;
+const THREAT_BY_MINOR: usize = THREAT_BY_PAWN + 1;
+const THREAT_BY_ROOK: usize = THREAT_BY_MINOR + 1;
+const HANGING: usize = THREAT_BY_ROOK + 1;
+pub const FEATURE_COUNT: usize = HANGING + 1;
 
 /// Index in `style::GROUPS` of the group a feature belongs to.
 pub fn group(index: usize) -> usize {
     match index {
         BISHOP_PAIR => 0,
         ROOK_OPEN_FILE | ROOK_SEMI_OPEN_FILE => 3,
+        THREAT_BY_PAWN..=HANGING => 3,
         i if i < PIECE_SQUARE => 0,
         i if i < DOUBLED => 1,
         i if i < MOBILITY => 2,
@@ -94,6 +102,15 @@ pub static FEATURE_NAMES: LazyLock<Vec<String>> = LazyLock::new(|| {
     names.extend((0..=4).map(|n| format!("king_attackers_{n}")));
     names.extend(["shield_near", "shield_far", "king_open_files"].map(String::from));
     names.extend(["bishop_pair", "rook_open_file", "rook_semi_open_file"].map(String::from));
+    names.extend(
+        [
+            "threat_by_pawn",
+            "threat_by_minor",
+            "threat_by_rook",
+            "hanging",
+        ]
+        .map(String::from),
+    );
     names
 });
 
@@ -120,6 +137,55 @@ pub fn for_each_feature(board: &Board, mut f: impl FnMut(usize, i32)) {
         mobility(board, color, |index| f(index, sign));
         king_safety(board, color, |index, value| f(index, sign * value));
         pieces(board, color, |index| f(index, sign));
+        threats(board, color, |index, value| f(index, sign * value));
+    }
+}
+
+/// Squares a piece of `color` and kind `kind` attacks, over all such pieces.
+fn attacks_by(board: &Board, color: Color, kind: PieceKind) -> Bitboard {
+    let occupied = board.occupied();
+    let pieces = board.pieces(color, kind);
+    match kind {
+        PieceKind::Pawn => match color {
+            Color::White => pieces.north_east() | pieces.north_west(),
+            Color::Black => pieces.south_east() | pieces.south_west(),
+        },
+        _ => pieces.into_iter().fold(Bitboard::EMPTY, |acc, sq| {
+            acc | match kind {
+                PieceKind::Knight => attacks::knight(sq),
+                PieceKind::Bishop => attacks::bishop(sq, occupied),
+                PieceKind::Rook => attacks::rook(sq, occupied),
+                PieceKind::Queen => attacks::queen(sq, occupied),
+                _ => attacks::king(sq),
+            }
+        }),
+    }
+}
+
+/// Enemy pieces other than pawns that pieces of `color` threaten: attacked by a pawn, a rook
+/// or queen attacked by a minor piece, a queen attacked by a rook, and any attacked while
+/// undefended.
+fn threats(board: &Board, color: Color, mut f: impl FnMut(usize, i32)) {
+    use PieceKind::*;
+    let them = !color;
+    let majors = board.pieces(them, Rook) | board.pieces(them, Queen);
+    let pieces = majors | board.pieces(them, Knight) | board.pieces(them, Bishop);
+    let ours = |kind| attacks_by(board, color, kind);
+    let attacked = PieceKind::ALL
+        .iter()
+        .fold(Bitboard::EMPTY, |acc, &k| acc | ours(k));
+    let defended = PieceKind::ALL
+        .iter()
+        .fold(Bitboard::EMPTY, |acc, &k| acc | attacks_by(board, them, k));
+    for (index, targets) in [
+        (THREAT_BY_PAWN, ours(Pawn) & pieces),
+        (THREAT_BY_MINOR, (ours(Knight) | ours(Bishop)) & majors),
+        (THREAT_BY_ROOK, ours(Rook) & board.pieces(them, Queen)),
+        (HANGING, attacked & pieces & !defended),
+    ] {
+        if !targets.is_empty() {
+            f(index, targets.count() as i32);
+        }
     }
 }
 

@@ -478,3 +478,7 @@ king_open_files      -21          -7      -12
 bishop_pair       42          51       49
 rook_open_file       39          27      -19
 rook_semi_open_file       23           5       22
+threat_by_pawn        0           0        0
+threat_by_minor        0           0        0
+threat_by_rook        0           0        0
+hanging           0           0        0
