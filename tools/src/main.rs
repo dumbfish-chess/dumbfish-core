@@ -1,13 +1,17 @@
+use std::fs;
 use std::process::ExitCode;
 use std::time::Instant;
 
+use dumbfish::eval::evaluate;
+
 use dumbfish_core::board::STARTPOS;
 use dumbfish_core::perft::divide;
-use dumbfish_core::{Bitboard, Board, Square};
+use dumbfish_core::{Bitboard, Board, Color, Square};
 
 const USAGE: &str = "usage:
   dumbfish-tools magics
-  dumbfish-tools perft <depth> [fen]";
+  dumbfish-tools perft <depth> [fen]
+  dumbfish-tools wdl <dataset.epd>";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -17,6 +21,7 @@ fn main() -> ExitCode {
             Ok(())
         }
         Some("perft") => perft(&args[1..]),
+        Some("wdl") => wdl(&args[1..]),
         _ => Err(USAGE.to_string()),
     };
     match result {
@@ -55,6 +60,84 @@ fn perft(args: &[String]) -> Result<(), String> {
         (total as f64 / elapsed.as_secs_f64()) as u64
     );
     Ok(())
+}
+
+/// Prints `engine/wdl.txt` fitted to the game results of a dataset (lines with a FEN and
+/// \"1-0\", \"0-1\" or \"1/2-1/2\", as for the tuner), with the shipped evaluation:
+/// win = σ((cp - a) / b), loss = σ((-cp - a) / b), by maximum likelihood.
+fn wdl(args: &[String]) -> Result<(), String> {
+    let [path] = args else {
+        return Err(USAGE.to_string());
+    };
+    let text = fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+    let mut samples = Vec::new();
+    for (number, line) in (1..).zip(text.lines()) {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let fen: Vec<_> = line.split_whitespace().take(4).collect();
+        let board = Board::from_fen(&fen.join(" ")).map_err(|e| format!("line {number}: {e}"))?;
+        let result = [("\"1-0\"", 2), ("\"1/2-1/2\"", 1), ("\"0-1\"", 0)]
+            .into_iter()
+            .find(|(token, _)| line.contains(token))
+            .ok_or_else(|| format!("line {number}: no result"))?
+            .1;
+        let score = match board.side_to_move() {
+            Color::White => evaluate(&board),
+            Color::Black => -evaluate(&board),
+        };
+        samples.push((f64::from(score), result));
+    }
+    if samples.is_empty() {
+        return Err(format!("{path}: no positions"));
+    }
+
+    let (mut a, mut b) = (100.0, 100.0);
+    for _ in 0..20 {
+        a = minimize(1.0, 1000.0, |a| wdl_loss(&samples, a, b));
+        b = minimize(1.0, 1000.0, |b| wdl_loss(&samples, a, b));
+    }
+    println!("# a b: win = sigmoid((cp - a) / b), loss = sigmoid((-cp - a) / b)");
+    println!("{a:.1} {b:.1}");
+    eprintln!(
+        "{} positions, log loss {:.6}",
+        samples.len(),
+        wdl_loss(&samples, a, b)
+    );
+    Ok(())
+}
+
+/// Mean negative log-likelihood of the results (0 loss, 1 draw, 2 win) under the model.
+fn wdl_loss(samples: &[(f64, u8)], a: f64, b: f64) -> f64 {
+    let sigmoid = |x: f64| 1.0 / (1.0 + (-x).exp());
+    let total: f64 = samples
+        .iter()
+        .map(|&(score, result)| {
+            let win = sigmoid((score - a) / b);
+            let loss = sigmoid((-score - a) / b);
+            let p = match result {
+                2 => win,
+                0 => loss,
+                _ => 1.0 - win - loss,
+            };
+            -p.max(1e-12).ln()
+        })
+        .sum();
+    total / samples.len() as f64
+}
+
+/// Minimum of a unimodal `f` on `[lo, hi]`, by golden-section search.
+fn minimize(mut lo: f64, mut hi: f64, f: impl Fn(f64) -> f64) -> f64 {
+    let ratio = (5f64.sqrt() - 1.0) / 2.0;
+    for _ in 0..60 {
+        let (x, y) = (hi - ratio * (hi - lo), lo + ratio * (hi - lo));
+        if f(x) < f(y) {
+            hi = y;
+        } else {
+            lo = x;
+        }
+    }
+    (lo + hi) / 2.0
 }
 
 /// Prints `BISHOP_MAGICS` and `ROOK_MAGICS` for `core/src/attacks.rs`.

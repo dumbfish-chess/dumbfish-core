@@ -5,3 +5,4 @@ edition.workspace = true
 
 [dependencies]
 dumbfish-core = { path = "../core" }
+dumbfish = { path = "../engine" }
