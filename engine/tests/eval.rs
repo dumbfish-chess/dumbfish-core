@@ -59,7 +59,7 @@ fn feature_names_are_unique() {
     assert_eq!(FEATURE_NAMES[5], "pawn_a1");
     assert_eq!(FEATURE_NAMES[5 + 6 * 64 - 1], "king_h8");
     assert_eq!(FEATURE_NAMES[5 + 6 * 64 + 3 + 5], "passed_7");
-    assert_eq!(FEATURE_NAMES[FEATURE_COUNT - 1], "passed_enemy_king");
+    assert_eq!(FEATURE_NAMES[FEATURE_COUNT - 1], "space");
 }
 
 #[test]
@@ -811,6 +811,36 @@ fn threat_features_match_reference() {
     );
 }
 
+/// Space recomputed square by square.
+fn reference_space(board: &Board) -> Vec<(String, i32)> {
+    let mut total = 0;
+    for (color, sign, ranks) in [(Color::White, 1, 1..=3), (Color::Black, -1, 4..=6)] {
+        for file in 2..=5 {
+            for rank in ranks.clone() {
+                let sq = Square::new(file, rank);
+                let own_pawn = board.piece_on(sq) == Some(Piece::new(color, PieceKind::Pawn));
+                if !own_pawn && !reference_attacked_by(board, !color, sq, &[PieceKind::Pawn]) {
+                    total += sign;
+                }
+            }
+        }
+    }
+    [("space".to_string(), total)]
+        .into_iter()
+        .filter(|&(_, v)| v != 0)
+        .collect()
+}
+
+#[test]
+fn space_matches_reference() {
+    assert_matches_reference(&["space"], reference_space);
+    assert_eq!(
+        reference_space(&Board::from_fen("4k3/8/8/8/3P4/8/8/4K3 b - - 0 1").unwrap()),
+        [("space".to_string(), 11 - 10)],
+        "of 12 squares white loses d4 to its own pawn, black loses c5 and e5 to it"
+    );
+}
+
 #[test]
 fn threat_examples() {
     let board = Board::from_fen("8/5k2/2qpr3/3P4/8/5N2/8/R3K3 w - - 0 1").unwrap();
@@ -835,4 +865,5 @@ fn feature_groups() {
     assert_eq!(group_of("king_open_files"), "king_defense");
     assert_eq!(group_of("hanging"), "mobility");
     assert_eq!(group_of("passed_own_king"), "pawns");
+    assert_eq!(group_of("space"), "positional");
 }

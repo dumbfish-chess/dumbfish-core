@@ -26,7 +26,9 @@
 //!   (queens attacked by a rook), `hanging` (attacked and not defended);
 //! - passed pawn details, per passed pawn: `passed_supported` (defended by an own pawn),
 //!   `passed_own_king` and `passed_enemy_king` (distance in king moves from the king to the
-//!   square in front of the pawn, times the pawn's rank counted from its side minus 2).
+//!   square in front of the pawn, times the pawn's rank counted from its side minus 2);
+//! - `space`: squares on files c to f, ranks 2 to 4 counted from the own side, without own pawns
+//!   and not attacked by enemy pawns.
 
 use std::fmt::Write as _;
 use std::sync::LazyLock;
@@ -71,7 +73,8 @@ const HANGING: usize = THREAT_BY_ROOK + 1;
 const PASSED_SUPPORTED: usize = HANGING + 1;
 const PASSED_OWN_KING: usize = PASSED_SUPPORTED + 1;
 const PASSED_ENEMY_KING: usize = PASSED_OWN_KING + 1;
-pub const FEATURE_COUNT: usize = PASSED_ENEMY_KING + 1;
+const SPACE: usize = PASSED_ENEMY_KING + 1;
+pub const FEATURE_COUNT: usize = SPACE + 1;
 
 /// Index in `style::GROUPS` of the group a feature belongs to.
 pub fn group(index: usize) -> usize {
@@ -80,6 +83,7 @@ pub fn group(index: usize) -> usize {
         ROOK_OPEN_FILE | ROOK_SEMI_OPEN_FILE => 3,
         THREAT_BY_PAWN..=HANGING => 3,
         PASSED_SUPPORTED..=PASSED_ENEMY_KING => 2,
+        SPACE => 1,
         i if i < PIECE_SQUARE => 0,
         i if i < DOUBLED => 1,
         i if i < MOBILITY => 2,
@@ -119,6 +123,7 @@ pub static FEATURE_NAMES: LazyLock<Vec<String>> = LazyLock::new(|| {
         .map(String::from),
     );
     names.extend(["passed_supported", "passed_own_king", "passed_enemy_king"].map(String::from));
+    names.push("space".into());
     names
 });
 
@@ -146,6 +151,10 @@ pub fn for_each_feature(board: &Board, mut f: impl FnMut(usize, i32)) {
         king_safety(board, color, |index, value| f(index, sign * value));
         pieces(board, color, |index| f(index, sign));
         threats(board, color, |index, value| f(index, sign * value));
+        let space = space(board, color);
+        if space > 0 {
+            f(SPACE, sign * space);
+        }
     }
 }
 
@@ -168,6 +177,18 @@ fn attacks_by(board: &Board, color: Color, kind: PieceKind) -> Bitboard {
             }
         }),
     }
+}
+
+/// Squares on files c to f, ranks 2 to 4 counted from the side of `color`, without own pawns and
+/// not attacked by enemy pawns.
+fn space(board: &Board, color: Color) -> i32 {
+    let files = Bitboard::file(2) | Bitboard::file(3) | Bitboard::file(4) | Bitboard::file(5);
+    let ranks = match color {
+        Color::White => Bitboard::rank(1) | Bitboard::rank(2) | Bitboard::rank(3),
+        Color::Black => Bitboard::rank(4) | Bitboard::rank(5) | Bitboard::rank(6),
+    };
+    let safe = !board.pieces(color, PieceKind::Pawn) & !attacks_by(board, !color, PieceKind::Pawn);
+    (files & ranks & safe).count() as i32
 }
 
 /// Enemy pieces other than pawns that pieces of `color` threaten: attacked by a pawn, a rook

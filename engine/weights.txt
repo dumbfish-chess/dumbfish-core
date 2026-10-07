@@ -485,3 +485,4 @@ hanging           9           6       -7
 passed_supported       16          29        5
 passed_own_king       11          -4       -4
 passed_enemy_king        2           0       12
+space             0           0        0
