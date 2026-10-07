@@ -1,0 +1,83 @@
+//! Move ordering: hash move, captures by MVV-LVA and SEE, killers, countermoves, history.
+
+use super::*;
+
+pub(super) const MAX_HISTORY: i32 = 16_384;
+
+/// Captures and promotions first, by most valuable victim, then least valuable attacker;
+/// quiet moves keep their generation order.
+pub(super) fn order_moves(board: &Board, moves: &mut [Move]) {
+    moves.sort_by_key(|&mv| Reverse(move_order_key(board, mv)));
+}
+
+pub(super) fn move_order_key(board: &Board, mv: Move) -> i32 {
+    const VALUE: [i32; 6] = [1, 3, 3, 5, 9, 0];
+    let value = |sq| board.piece_on(sq).map_or(0, |p| VALUE[p.kind.index()]);
+    let gain = match mv.kind() {
+        MoveKind::EnPassant => VALUE[0],
+        MoveKind::Promotion(kind) => value(mv.to()) + VALUE[kind.index()] - VALUE[0],
+        _ => value(mv.to()),
+    };
+    if gain > 0 {
+        10 * gain - value(mv.from())
+    } else {
+        0
+    }
+}
+
+impl Searcher<'_> {
+    /// The move from the transposition table first, then captures and promotions that do not
+    /// lose material by `move_order_key`, then the killer moves of this ply and the countermove
+    /// to the last move, then the other quiet moves by history, and the captures that lose
+    /// material last.
+    pub(super) fn order(&self, moves: &mut [Move], tt_move: Option<Move>, ply: i32) {
+        let killers = self.killers[ply as usize];
+        let countermove = self
+            .countermove_slot(ply)
+            .and_then(|(piece, to)| self.countermoves[piece][to]);
+        let history = &self.history[self.board.side_to_move().index()];
+        moves.sort_by_key(|&mv| {
+            Reverse(match move_order_key(self.board, mv) {
+                _ if Some(mv) == tt_move => i32::MAX,
+                tactical if tactical > 0 && see(self.board, mv) >= 0 => 1_000_000 + tactical,
+                tactical if tactical > 0 => -1_000_000 + tactical,
+                _ if Some(mv) == killers[0] => 2 * MAX_HISTORY + 2,
+                _ if Some(mv) == killers[1] => 2 * MAX_HISTORY + 1,
+                _ if Some(mv) == countermove => 2 * MAX_HISTORY,
+                _ => history[mv.from().index()][mv.to().index()],
+            })
+        });
+    }
+
+    /// Rewards the quiet move that caused a beta cutoff and penalizes the quiet moves tried
+    /// before it, by `depth²`; values decay towards zero as they approach `MAX_HISTORY`.
+    pub(super) fn update_history(&mut self, cutoff: Move, tried: &[Move], depth: u32) {
+        let bonus = (depth * depth).min(MAX_HISTORY as u32) as i32;
+        let history = &mut self.history[self.board.side_to_move().index()];
+        let mut update = |mv: Move, bonus: i32| {
+            let h = &mut history[mv.from().index()][mv.to().index()];
+            *h += bonus - *h * bonus.abs() / MAX_HISTORY;
+        };
+        update(cutoff, bonus);
+        for &mv in tried {
+            update(mv, -bonus);
+        }
+    }
+
+    /// A quiet move that caused a beta cutoff, to be tried early in sibling nodes.
+    pub(super) fn remember_killer(&mut self, mv: Move, ply: i32) {
+        let killers = &mut self.killers[ply as usize];
+        if killers[0] != Some(mv) {
+            killers[1] = killers[0];
+            killers[0] = Some(mv);
+        }
+    }
+
+    /// Index into `countermoves` for the move that led to the node at `ply`: the piece that made
+    /// it and its target square; `None` at the root and after a null move.
+    pub(super) fn countermove_slot(&self, ply: i32) -> Option<(usize, usize)> {
+        let previous = self.played[(ply as usize).checked_sub(1)?]?;
+        let piece = self.board.piece_on(previous.to())?;
+        Some((piece.index(), previous.to().index()))
+    }
+}
