@@ -211,9 +211,9 @@ impl<'a> Searcher<'a> {
         self.nodes += 1;
         let mut best = None;
         let mut alpha = -INFINITY;
-        for &mv in moves {
+        for (i, &mv) in moves.iter().enumerate() {
             self.board.make_move(mv);
-            let score = -self.negamax(depth - 1, 1, -INFINITY, -alpha);
+            let score = self.principal_variation(i == 0, depth - 1, 1, alpha, INFINITY);
             self.board.unmake_move();
             if self.aborted {
                 return None;
@@ -305,9 +305,9 @@ impl<'a> Searcher<'a> {
 
         let original_alpha = alpha;
         let (mut best, mut best_move) = (-INFINITY, None);
-        for &mv in &moves {
+        for (i, &mv) in moves.iter().enumerate() {
             self.board.make_move(mv);
-            let score = -self.negamax(depth - 1, ply + 1, -beta, -alpha);
+            let score = self.principal_variation(i == 0, depth - 1, ply + 1, alpha, beta);
             self.board.unmake_move();
             if self.aborted {
                 return 0;
@@ -334,6 +334,28 @@ impl<'a> Searcher<'a> {
             bound,
         });
         best
+    }
+
+    /// Score of the move just made, for the side that made it. The first move gets the full
+    /// window; later ones are only tested against a null window at `alpha` and searched again
+    /// with the full window if they beat it.
+    fn principal_variation(
+        &mut self,
+        first: bool,
+        depth: u32,
+        ply: i32,
+        alpha: i32,
+        beta: i32,
+    ) -> i32 {
+        if first {
+            return -self.negamax(depth, ply, -beta, -alpha);
+        }
+        let score = -self.negamax(depth, ply, -alpha - 1, -alpha);
+        if score > alpha && score < beta && !self.aborted {
+            -self.negamax(depth, ply, -beta, -alpha)
+        } else {
+            score
+        }
     }
 
     /// Searches captures only, until the position is quiet; the side to move may also stand pat
