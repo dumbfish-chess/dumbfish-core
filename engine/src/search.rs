@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use dumbfish_core::{Board, Move, MoveKind, MoveList, PieceKind, Square};
 
 use crate::eval;
+use crate::see::see;
 use crate::skill::{MAX_LEVEL, Skill};
 use crate::style::Style;
 use crate::tt::{Bound, Entry, TranspositionTable, score_from_tt, score_to_tt};
@@ -590,8 +591,8 @@ impl<'a> Searcher<'a> {
         }
     }
 
-    /// Searches captures only, until the position is quiet; the side to move may also stand pat
-    /// on the static evaluation.
+    /// Searches captures and promotions that do not lose material by `see`, until the position
+    /// is quiet; the side to move may also stand pat on the static evaluation.
     fn quiescence(&mut self, ply: i32, mut alpha: i32, beta: i32) -> i32 {
         self.nodes += 1;
         self.seldepth = self.seldepth.max(ply as u32);
@@ -612,6 +613,9 @@ impl<'a> Searcher<'a> {
             .count();
         let mut best = stand_pat;
         for &mv in &moves[..captures] {
+            if see(self.board, mv) < 0 {
+                continue;
+            }
             self.board.make_move(mv);
             let score = -self.quiescence(ply + 1, -beta, -alpha);
             self.board.unmake_move();
