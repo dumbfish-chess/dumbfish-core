@@ -13,6 +13,7 @@ use crate::style::{self, GROUPS, PRESETS, Style};
 use crate::tt::{self, TranspositionTable};
 
 const MOVE_OVERHEAD: Duration = Duration::from_millis(30);
+const MAX_THREADS: usize = 256;
 
 /// Reads UCI commands from stdin until `quit` or end of input.
 pub fn run() {
@@ -21,6 +22,7 @@ pub fn run() {
         tt: Some(TranspositionTable::new(tt::DEFAULT_MEGABYTES)),
         skill_level: skill::MAX_LEVEL,
         style: PRESETS[0].style,
+        threads: 1,
         stop: Arc::new(AtomicBool::new(false)),
         worker: None,
     };
@@ -37,6 +39,7 @@ pub fn run() {
                     tt::DEFAULT_MEGABYTES,
                     tt::MAX_MEGABYTES
                 );
+                println!("option name Threads type spin default 1 min 1 max {MAX_THREADS}");
                 println!(
                     "option name Skill Level type spin default {0} min 0 max {0}",
                     skill::MAX_LEVEL
@@ -105,6 +108,7 @@ struct Engine {
     skill_level: u8,
     /// Set by `Style`; the group options and `Contempt` then override single values.
     style: Style,
+    threads: usize,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<TranspositionTable>>,
 }
@@ -174,6 +178,10 @@ impl Engine {
                 self.style = preset.style;
                 Ok(())
             }
+            ("threads", _) => {
+                self.threads = parse_in(&value, 1, MAX_THREADS as i32)? as usize;
+                Ok(())
+            }
             ("contempt", _) => {
                 self.style.contempt = parse_in(&value, -style::MAX_CONTEMPT, style::MAX_CONTEMPT)?;
                 Ok(())
@@ -193,12 +201,13 @@ impl Engine {
             seed,
         });
         limits.style = self.style;
+        limits.threads = self.threads;
         self.stop.store(false, Ordering::Relaxed);
         let stop = Arc::clone(&self.stop);
         let mut board = self.board.clone();
-        let mut tt = self.tt.take().expect("no search is running");
+        let tt = self.tt.take().expect("no search is running");
         self.worker = Some(thread::spawn(move || {
-            let (best, _) = search::search(&mut board, &limits, &stop, &mut tt, print_info);
+            let (best, _) = search::search(&mut board, &limits, &stop, &tt, print_info);
             while infinite && !stop.load(Ordering::Relaxed) {
                 thread::sleep(Duration::from_millis(5));
             }

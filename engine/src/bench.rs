@@ -25,7 +25,7 @@ pub fn run(depth: u32) {
     for fen in POSITIONS.lines() {
         let mut board = Board::from_fen(fen).expect("valid bench position");
         tt.clear();
-        nodes += search::search(&mut board, &limits, &stop, &mut tt, |_| {}).1;
+        nodes += search::search(&mut board, &limits, &stop, &tt, |_| {}).1;
     }
     let nps = (nodes as f64 / start.elapsed().as_secs_f64().max(1e-3)) as u64;
     println!("{nodes} nodes {nps} nps");

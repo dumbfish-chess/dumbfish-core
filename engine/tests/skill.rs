@@ -12,8 +12,8 @@ fn skill(level: u8, seed: u64) -> Skill {
 
 fn search(fen: &str, limits: &Limits) -> (Option<Move>, u64) {
     let mut board = Board::from_fen(fen).unwrap();
-    let mut tt = TranspositionTable::new(1);
-    search::search(&mut board, limits, &AtomicBool::new(false), &mut tt, |_| {})
+    let tt = TranspositionTable::new(1);
+    search::search(&mut board, limits, &AtomicBool::new(false), &tt, |_| {})
 }
 
 #[test]

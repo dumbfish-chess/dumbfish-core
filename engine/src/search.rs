@@ -1,5 +1,6 @@
 use std::cmp::Reverse;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use dumbfish_core::{Board, Move, MoveKind, MoveList, PieceKind};
@@ -19,9 +20,12 @@ pub struct Limits {
     pub depth: Option<u32>,
     pub nodes: Option<u64>,
     pub deadline: Option<Instant>,
-    /// Below `MAX_LEVEL`, adds the skill's node budget and picks the move with its noise.
+    /// Below `MAX_LEVEL`, adds the skill's node budget and picks the move with its noise; the
+    /// search then runs on one thread.
     pub skill: Option<Skill>,
     pub style: Style,
+    /// Search threads sharing the transposition table (Lazy SMP); 0 counts as 1.
+    pub threads: usize,
 }
 
 /// A finished iteration of iterative deepening.
@@ -35,33 +39,81 @@ pub struct Iteration {
 
 /// Iterative deepening until a limit is hit or `stop` is set. Returns the best move of the
 /// last finished iteration (any legal move if none finished; `None` if there are no moves)
-/// and the number of nodes searched.
+/// and the number of nodes searched by all threads.
+///
+/// Helper threads search their own copies of the board to the same limits and share only the
+/// transposition table; the calling thread alone reports iterations and picks the move, and the
+/// helpers stop when it is done.
 pub fn search(
     board: &mut Board,
     limits: &Limits,
     stop: &AtomicBool,
-    tt: &mut TranspositionTable,
+    tt: &TranspositionTable,
     mut on_iteration: impl FnMut(&Iteration),
 ) -> (Option<Move>, u64) {
     let start = Instant::now();
     let skill = limits.skill.filter(|s| s.level < MAX_LEVEL);
-    let mut moves = board.legal_moves();
-    order_moves(board, &mut moves);
-    let mut best = moves.first().copied();
-    let mut searcher = Searcher {
-        board,
-        limits,
-        node_limit: [limits.nodes, skill.and_then(Skill::nodes)]
+    let threads = if skill.is_some() {
+        1
+    } else {
+        limits.threads.max(1)
+    };
+    let max_depth = limits.depth.unwrap_or(MAX_DEPTH).min(MAX_DEPTH);
+    let finished = AtomicBool::new(false);
+    let total_nodes = AtomicU64::new(0);
+
+    thread::scope(|scope| {
+        for helper in 1..threads {
+            let mut board = board.clone();
+            let (finished, total_nodes) = (&finished, &total_nodes);
+            scope.spawn(move || {
+                let mut moves = board.legal_moves();
+                order_moves(&board, &mut moves);
+                let mut searcher =
+                    Searcher::new(&mut board, limits, None, [stop, finished], tt, total_nodes);
+                for depth in (1 + helper % 2) as u32..=max_depth {
+                    if searcher.root(depth, &moves).is_none() {
+                        break;
+                    }
+                }
+                searcher.flush_nodes();
+            });
+        }
+
+        let node_limit = [limits.nodes, skill.and_then(Skill::nodes)]
             .into_iter()
             .flatten()
-            .min(),
-        stop,
-        tt,
-        nodes: 0,
-        aborted: false,
-    };
+            .min();
+        let searcher = Searcher::new(
+            board,
+            limits,
+            node_limit,
+            [stop, &finished],
+            tt,
+            &total_nodes,
+        );
+        let best = main_search(searcher, skill, max_depth, start, &mut on_iteration);
+        finished.store(true, Ordering::Relaxed);
+        best
+    })
+    .map_or((None, total_nodes.load(Ordering::Relaxed)), |best| {
+        (Some(best), total_nodes.load(Ordering::Relaxed))
+    })
+}
+
+/// The iterative deepening of the calling thread; `None` if there are no moves.
+fn main_search(
+    mut searcher: Searcher,
+    skill: Option<Skill>,
+    max_depth: u32,
+    start: Instant,
+    on_iteration: &mut impl FnMut(&Iteration),
+) -> Option<Move> {
+    let mut moves = searcher.board.legal_moves();
+    order_moves(searcher.board, &mut moves);
+    let mut best = moves.first().copied();
     let mut scores = Vec::new();
-    for depth in 1..=limits.depth.unwrap_or(MAX_DEPTH).min(MAX_DEPTH) {
+    for depth in 1..=max_depth {
         let found = match skill {
             Some(_) => searcher.root_scores(depth, &moves),
             None => searcher.root(depth, &moves).map(|best| vec![best]),
@@ -80,14 +132,15 @@ pub fn search(
             depth,
             score,
             best: mv,
-            nodes: searcher.nodes,
+            nodes: searcher.total_nodes.load(Ordering::Relaxed) + searcher.nodes - searcher.flushed,
             elapsed: start.elapsed(),
         });
     }
+    searcher.flush_nodes();
     if let Some(skill) = skill {
         best = skill.choose(&scores).or(best);
     }
-    (best, searcher.nodes)
+    best
 }
 
 /// Captures and promotions first, by most valuable victim, then least valuable attacker;
@@ -115,13 +168,44 @@ struct Searcher<'a> {
     board: &'a mut Board,
     limits: &'a Limits,
     node_limit: Option<u64>,
-    stop: &'a AtomicBool,
-    tt: &'a mut TranspositionTable,
+    /// The caller's stop flag and the flag that ends helper threads.
+    stops: [&'a AtomicBool; 2],
+    tt: &'a TranspositionTable,
     nodes: u64,
+    /// Nodes already added to `total_nodes`.
+    flushed: u64,
+    total_nodes: &'a AtomicU64,
     aborted: bool,
 }
 
-impl Searcher<'_> {
+impl<'a> Searcher<'a> {
+    fn new(
+        board: &'a mut Board,
+        limits: &'a Limits,
+        node_limit: Option<u64>,
+        stops: [&'a AtomicBool; 2],
+        tt: &'a TranspositionTable,
+        total_nodes: &'a AtomicU64,
+    ) -> Self {
+        Self {
+            board,
+            limits,
+            node_limit,
+            stops,
+            tt,
+            nodes: 0,
+            flushed: 0,
+            total_nodes,
+            aborted: false,
+        }
+    }
+
+    fn flush_nodes(&mut self) {
+        self.total_nodes
+            .fetch_add(self.nodes - self.flushed, Ordering::Relaxed);
+        self.flushed = self.nodes;
+    }
+
     /// Best root move and its score; `None` if aborted or there are no moves.
     fn root(&mut self, depth: u32, moves: &MoveList) -> Option<(Move, i32)> {
         self.nodes += 1;
@@ -310,13 +394,16 @@ impl Searcher<'_> {
         }
     }
 
-    /// Polls the clock and the stop flag every 1024 nodes; the node limit is exact.
+    /// Polls the clock and the stop flags, and reports nodes, every 1024 nodes; the node limit
+    /// is exact.
     fn should_abort(&mut self) -> bool {
-        self.aborted = self.aborted
-            || self.node_limit.is_some_and(|n| self.nodes > n)
-            || (self.nodes.is_multiple_of(1024)
-                && (self.stop.load(Ordering::Relaxed)
-                    || self.limits.deadline.is_some_and(|d| Instant::now() >= d)));
+        if self.nodes.is_multiple_of(1024) {
+            self.flush_nodes();
+            self.aborted = self.aborted
+                || self.stops.iter().any(|s| s.load(Ordering::Relaxed))
+                || self.limits.deadline.is_some_and(|d| Instant::now() >= d);
+        }
+        self.aborted = self.aborted || self.node_limit.is_some_and(|n| self.nodes > n);
         self.aborted
     }
 }

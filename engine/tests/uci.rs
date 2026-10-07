@@ -285,7 +285,7 @@ fn hash_option() {
     );
     engine.send("setoption name Hash value 0");
     engine.send("setoption name Hash value lots");
-    engine.send("setoption name Threads value 4");
+    engine.send("setoption name Ponder value true");
     engine.send("setoption name Hash value 1");
     engine.send("isready");
     let lines = engine.read_until("readyok");
@@ -408,4 +408,38 @@ fn contempt_decides_about_repetition() {
         let best = engine.best_move();
         assert_eq!(best == "f6g8", repeats, "contempt {contempt}: {best}");
     }
+}
+
+#[test]
+fn threads_option() {
+    let mut engine = Engine::start();
+    engine.send("uci");
+    let lines = engine.read_until("uciok");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l == "option name Threads type spin default 1 min 1 max 256"),
+        "{lines:?}"
+    );
+    engine.send("setoption name Threads value 0");
+    engine.send("setoption name Threads value 3");
+    engine.send("isready");
+    let lines = engine.read_until("readyok");
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|l| l.starts_with("info string"))
+            .count(),
+        1,
+        "{lines:?}"
+    );
+    engine.send("position startpos");
+    engine.send("go infinite");
+    std::thread::sleep(Duration::from_millis(200));
+    engine.send("stop");
+    let best = engine.best_move();
+    assert!(
+        is_legal(dumbfish_core::board::STARTPOS, &[], &best),
+        "{best}"
+    );
 }
