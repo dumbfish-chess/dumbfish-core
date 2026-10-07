@@ -606,6 +606,17 @@ impl<'a> Searcher<'a> {
         if self.should_abort() {
             return 0;
         }
+        let key = self.board.hash();
+        if let Some(e) = self.tt.probe(key) {
+            let score = score_from_tt(e.score, ply);
+            match e.bound {
+                Bound::Exact => return score,
+                Bound::Lower if score >= beta => return score,
+                Bound::Upper if score <= alpha => return score,
+                _ => {}
+            }
+        }
+        let original_alpha = alpha;
         let stand_pat = self.evaluate();
         if stand_pat >= beta {
             return stand_pat;
@@ -614,7 +625,7 @@ impl<'a> Searcher<'a> {
 
         let mut moves = self.board.legal_captures();
         order_moves(self.board, &mut moves);
-        let mut best = stand_pat;
+        let (mut best, mut best_move) = (stand_pat, None);
         for &mv in moves.iter() {
             let captured = match mv.kind() {
                 MoveKind::EnPassant => Some(PieceKind::Pawn),
@@ -633,12 +644,26 @@ impl<'a> Searcher<'a> {
             if self.aborted {
                 return 0;
             }
-            best = best.max(score);
+            if score > best {
+                (best, best_move) = (score, Some(mv));
+            }
             alpha = alpha.max(score);
             if alpha >= beta {
                 break;
             }
         }
+        let bound = match best {
+            s if s <= original_alpha => Bound::Upper,
+            s if s >= beta => Bound::Lower,
+            _ => Bound::Exact,
+        };
+        self.tt.store(Entry {
+            key,
+            best: best_move,
+            score: score_to_tt(best, ply),
+            depth: 0,
+            bound,
+        });
         best
     }
 
