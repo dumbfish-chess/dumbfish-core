@@ -146,6 +146,11 @@ fn main_search(
     best
 }
 
+/// Depth reduction of the `number`-th move (from 1) of a node searched to `depth`.
+fn reduction(depth: u32, number: usize) -> u32 {
+    (0.75 + f64::from(depth).ln() * (number as f64).ln() / 2.25) as u32
+}
+
 /// Captures and promotions first, by most valuable victim, then least valuable attacker;
 /// quiet moves keep their generation order.
 fn order_moves(board: &Board, moves: &mut [Move]) {
@@ -310,9 +315,22 @@ impl<'a> Searcher<'a> {
         let original_alpha = alpha;
         let (mut best, mut best_move) = (-INFINITY, None);
         let mut quiets_tried = MoveList::default();
+        let in_check = self.board.in_check();
         for (i, &mv) in moves.iter().enumerate() {
+            let quiet = move_order_key(self.board, mv) == 0;
             self.board.make_move(mv);
-            let score = self.principal_variation(i == 0, depth - 1, ply + 1, alpha, beta);
+            let late = i >= 3 && depth >= 3 && quiet && !in_check && !self.board.in_check();
+            let score = if late {
+                let reduced = (depth - 1).saturating_sub(reduction(depth, i + 1));
+                let score = -self.negamax(reduced, ply + 1, -alpha - 1, -alpha);
+                if score > alpha && !self.aborted {
+                    self.principal_variation(false, depth - 1, ply + 1, alpha, beta)
+                } else {
+                    score
+                }
+            } else {
+                self.principal_variation(i == 0, depth - 1, ply + 1, alpha, beta)
+            };
             self.board.unmake_move();
             if self.aborted {
                 return 0;
@@ -321,7 +339,6 @@ impl<'a> Searcher<'a> {
                 (best, best_move) = (score, Some(mv));
             }
             alpha = alpha.max(score);
-            let quiet = move_order_key(self.board, mv) == 0;
             if alpha >= beta {
                 if quiet {
                     self.remember_killer(mv, ply);
