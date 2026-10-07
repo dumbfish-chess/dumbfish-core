@@ -44,7 +44,8 @@ GUI живёт в другом репозитории и общается с д�
   Эвристики не добавляются на интуиции — только с подтверждением SPRT.
 - SPRT: `scripts/sprt.sh <base-ref> [<dev-ref>]` собирает обе версии и играет матч до принятия H0 или H1
   (по умолчанию `tc=8+0.08`, границы `[0, 5]`, книга `8moves_v3` скачивается в `target/sprt/`). Для упрощений —
-  тест на отсутствие регресса: `ELO0=-5 ELO1=0`. Итог fastchess (строки `Elo:`, `LLR:`, `Games:`) копируется в
+  тест на отсутствие регресса: `ELO0=-5 ELO1=0`. UCI-опции одной стороны — `DEV_OPTIONS`/`BASE_OPTIONS`
+  (например, проверка многопоточности: `DEV_OPTIONS=Threads=2 CONCURRENCY=1`). Итог fastchess (строки `Elo:`, `LLR:`, `Games:`) копируется в
   тело коммита под строкой `Bench: N`. Нужен `fastchess` в `PATH`:
   ```sh
   git clone --depth 1 --branch v1.8.2-alpha https://github.com/Disservin/fastchess ~/.local/src/fastchess

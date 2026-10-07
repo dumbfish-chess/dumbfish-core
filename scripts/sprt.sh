@@ -8,6 +8,7 @@ against each other with fastchess until the SPRT accepts H0 or H1. Games go to t
 
 Environment (defaults):
   TC=8+0.08  CONCURRENCY=\$(nproc)  ELO0=0  ELO1=5
+  DEV_OPTIONS, BASE_OPTIONS: UCI options for one engine, e.g. \"Threads=2 Hash=64\"
   BOOK=target/sprt/8moves_v3.pgn (downloaded on first use)
 Non-regression test (simplifications): ELO0=-5 ELO1=0"
 
@@ -59,10 +60,18 @@ else
     echo "dev: working tree ($(git -C "$root" rev-parse --short HEAD)$(git -C "$root" diff --quiet HEAD || echo ', dirty'))"
 fi
 
+options() {
+    for option in $1; do
+        printf '%s\0' "option.$option"
+    done
+}
+mapfile -d '' dev_options < <(options "${DEV_OPTIONS:-}")
+mapfile -d '' base_options < <(options "${BASE_OPTIONS:-}")
+
 cd "$work"
 fastchess \
-    -engine cmd=./dev name=dev \
-    -engine cmd=./base name=base \
+    -engine cmd=./dev name=dev "${dev_options[@]}" \
+    -engine cmd=./base name=base "${base_options[@]}" \
     -each tc="${TC:-8+0.08}" \
     -openings file="$book" format=pgn order=random \
     -repeat -games 2 -rounds 50000 \
