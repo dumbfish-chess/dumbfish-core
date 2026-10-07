@@ -1,4 +1,5 @@
 use std::cmp::Reverse;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -9,6 +10,7 @@ use crate::eval;
 use crate::see::{piece_value, see};
 use crate::skill::{MAX_LEVEL, Skill};
 use crate::style::Style;
+use crate::syzygy::{RootProbe, Tablebases};
 use crate::time::Deadline;
 use crate::tt::{Bound, Entry, TranspositionTable, score_from_tt, score_to_tt};
 
@@ -18,6 +20,8 @@ const MAX_PLY: usize = MAX_DEPTH as usize + 1;
 const INFINITY: i32 = 32_000;
 /// Being mated `ply` plies from the root scores `ply - MATE`.
 pub const MATE: i32 = 31_000;
+/// A tablebase win `ply` plies from the root scores `TB_WIN - ply`, below any mate.
+pub const TB_WIN: i32 = 30_000;
 
 #[derive(Default)]
 pub struct Limits {
@@ -38,6 +42,9 @@ pub struct Limits {
     /// Best root moves to report per iteration, each with its own score and line; 0 counts as 1.
     /// Ignored below full skill.
     pub multipv: usize,
+    /// Endgame tables, used at full skill: a root position in them keeps only the moves with
+    /// the best result, and otherwise the search takes results from them.
+    pub tablebases: Option<Arc<Tablebases>>,
 }
 
 /// A finished iteration of iterative deepening.
@@ -81,15 +88,29 @@ pub fn search(
     let max_depth = limits.depth.unwrap_or(MAX_DEPTH).min(MAX_DEPTH);
     let finished = AtomicBool::new(false);
     let total_nodes = AtomicU64::new(0);
+    let mut moves = root_moves(board, limits);
+    let tablebases = limits.tablebases.as_deref().filter(|_| skill.is_none());
+    let tb_root = tablebases.and_then(|tb| tb.rank_root(board, &moves));
+    if let Some(probe) = &tb_root {
+        moves = probe.moves.iter().copied().collect();
+    }
+    let in_search = tablebases.filter(|_| tb_root.is_none());
 
     thread::scope(|scope| {
         for helper in 1..threads {
             let mut board = board.clone();
+            let mut moves: MoveList = moves.iter().copied().collect();
             let (finished, total_nodes) = (&finished, &total_nodes);
             scope.spawn(move || {
-                let mut moves = root_moves(&board, limits);
-                let mut searcher =
-                    Searcher::new(&mut board, limits, None, [stop, finished], tt, total_nodes);
+                let mut searcher = Searcher::new(
+                    &mut board,
+                    limits,
+                    None,
+                    [stop, finished],
+                    tt,
+                    total_nodes,
+                    in_search,
+                );
                 for depth in (1 + helper % 2) as u32..=max_depth {
                     let Some((best, _)) = searcher.root(depth, &moves, -INFINITY, INFINITY) else {
                         break;
@@ -111,8 +132,17 @@ pub fn search(
             [stop, &finished],
             tt,
             &total_nodes,
+            in_search,
         );
-        let best = main_search(searcher, skill, max_depth, start, &mut on_iteration);
+        let best = main_search(
+            searcher,
+            moves,
+            tb_root.as_ref(),
+            skill,
+            max_depth,
+            start,
+            &mut on_iteration,
+        );
         finished.store(true, Ordering::Relaxed);
         best
     })
@@ -121,15 +151,30 @@ pub fn search(
     })
 }
 
-/// The iterative deepening of the calling thread; `None` if there are no moves.
+/// The score of a root move to report: the tablebase result if the root is in the tables,
+/// unless the search found a mate.
+fn reported(tb: Option<&RootProbe>, score: i32) -> i32 {
+    match tb {
+        Some(tb) if score.abs() < MATE - MAX_DEPTH as i32 => match tb.wdl {
+            2 => TB_WIN - tb.dtz.abs(),
+            -2 => tb.dtz.abs() - TB_WIN,
+            wdl => wdl,
+        },
+        _ => score,
+    }
+}
+
+/// The iterative deepening of the calling thread over `moves`, whose tablebase result is `tb`;
+/// `None` if there are no moves.
 fn main_search(
     mut searcher: Searcher,
+    mut moves: MoveList,
+    tb: Option<&RootProbe>,
     skill: Option<Skill>,
     max_depth: u32,
     start: Instant,
     on_iteration: &mut impl FnMut(&Iteration),
 ) -> Option<Move> {
-    let mut moves = root_moves(searcher.board, searcher.limits);
     let mut best = moves.first().copied();
     let lines = searcher.limits.multipv.clamp(1, moves.len().max(1));
     let mut scores: Vec<(Move, i32)> = Vec::new();
@@ -181,7 +226,7 @@ fn main_search(
                 multipv: line + 1,
                 seldepth: searcher.seldepth,
                 hashfull: searcher.tt.hashfull(),
-                score,
+                score: reported(tb, score),
                 best: mv,
                 pv,
                 nodes: searcher.total_nodes.load(Ordering::Relaxed) + searcher.nodes
@@ -204,12 +249,11 @@ fn main_search(
 /// move.
 fn root_moves(board: &Board, limits: &Limits) -> MoveList {
     let legal = board.legal_moves();
-    let mut moves = MoveList::default();
-    for &mv in legal.iter() {
-        if limits.searchmoves.contains(&mv) {
-            moves.push(mv);
-        }
-    }
+    let mut moves: MoveList = legal
+        .iter()
+        .copied()
+        .filter(|mv| limits.searchmoves.contains(mv))
+        .collect();
     if moves.is_empty() {
         moves = legal;
     }
@@ -254,6 +298,8 @@ struct Searcher<'a> {
     excluded: [Option<Move>; MAX_PLY + 1],
     /// The quiet move that last refuted a move, by the piece that made it and its target square.
     countermoves: Box<[[Option<Move>; 64]; 12]>,
+    /// Endgame tables to take results from, after captures and pawn moves.
+    tablebases: Option<&'a Tablebases>,
 }
 
 mod alphabeta;
@@ -270,6 +316,7 @@ impl<'a> Searcher<'a> {
         stops: [&'a AtomicBool; 2],
         tt: &'a TranspositionTable,
         total_nodes: &'a AtomicU64,
+        tablebases: Option<&'a Tablebases>,
     ) -> Self {
         Self {
             board,
@@ -292,6 +339,7 @@ impl<'a> Searcher<'a> {
             played: [None; MAX_PLY + 1],
             excluded: [None; MAX_PLY + 1],
             countermoves: Box::new([[None; 64]; 12]),
+            tablebases,
         }
     }
 

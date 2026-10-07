@@ -581,3 +581,64 @@ fn show_wdl_option() {
         .sum();
     assert_eq!(sum, 1000, "{info}");
 }
+
+#[test]
+fn syzygy_path_option() {
+    let mut engine = Engine::start();
+    engine.send("uci");
+    let lines = engine.read_until("uciok");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l == "option name SyzygyPath type string default <empty>"),
+        "{lines:?}"
+    );
+    engine.send("setoption name SyzygyPath value /nonexistent");
+    assert_eq!(
+        engine.read_until("info string").last().unwrap(),
+        "info string found 0 tablebases, up to 0 pieces",
+        "a path without tables"
+    );
+}
+
+#[test]
+#[ignore = "needs Syzygy tables"]
+fn plays_tablebase_wins() {
+    let dir = std::env::var("SYZYGY_PATH")
+        .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../target/syzygy").into());
+    let tablebases = dumbfish::syzygy::Tablebases::open(&dir);
+    let mut engine = Engine::start();
+    engine.send(&format!("setoption name SyzygyPath value {dir}"));
+    let found = engine.read_until("info string");
+    assert!(!found.last().unwrap().contains("found 0 "), "{found:?}");
+    let fen = "8/8/8/3k4/8/8/8/KBN5 w - - 0 1";
+    engine.send(&format!("position fen {fen}"));
+    engine.send("go depth 3");
+    let lines = engine.read_until("bestmove");
+    let score: i32 = lines
+        .iter()
+        .rev()
+        .find_map(|l| {
+            l.split(" score cp ")
+                .nth(1)?
+                .split_whitespace()
+                .next()?
+                .parse()
+                .ok()
+        })
+        .unwrap();
+    assert!(score > 29_000, "a tablebase win: {lines:?}");
+    let best = lines.last().unwrap().split_whitespace().nth(1).unwrap();
+    let mut board = Board::from_fen(fen).unwrap();
+    let mv = *board
+        .legal_moves()
+        .iter()
+        .find(|m| m.to_string() == best)
+        .unwrap();
+    board.make_move(mv);
+    assert_eq!(
+        tablebases.probe_wdl(&mut board),
+        Some(-2),
+        "{best} keeps the win"
+    );
+}

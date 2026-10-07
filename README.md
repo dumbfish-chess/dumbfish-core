@@ -52,6 +52,8 @@ info depth 9 seldepth 21 multipv 1 score cp 42 wdl 323 500 177 nodes 193734 nps 
 ```
 
 - `score cp N` — оценка в сантипешках со стороны хода; `score mate N` — мат в N ходов (отрицательное — движку).
+  Выигрыш по эндшпильным таблицам — `cp 30000` минус число полуходов до взятия или хода пешкой (проигрыш — со
+  знаком минус).
 - `wdl W D L` — вероятности выигрыша, ничьей и проигрыша в промилле, только при `UCI_ShowWDL`.
 - `nodes`, `nps` — по всем потокам; `hashfull` — заполненность хэш-таблицы в промилле.
 - `pv` — главная вариация; линии MultiPV идут от лучшей.
@@ -67,6 +69,7 @@ info depth 9 seldepth 21 multipv 1 score cp 42 wdl 323 500 177 nodes 193734 nps 
 | `MultiPV` | spin | 1 | 1–256 | сколько лучших линий показывать |
 | `Ponder` | check | false | | разрешение думать в чужое время; само обдумывание включает `go ponder` |
 | `UCI_ShowWDL` | check | false | | добавлять `wdl` к оценке |
+| `SyzygyPath` | string | `<empty>` | каталоги через `:` | эндшпильные таблицы Syzygy (`.rtbw`, `.rtbz`); ответ — `info string found N tablebases, up to K pieces`. Если позиция в корне есть в таблицах, ищутся только ходы с лучшим результатом (кратчайший выигрыш, самый долгий проигрыш), иначе поиск берёт результат из таблиц после взятий и ходов пешкой. При `Skill Level` ниже 20 не используются |
 | `Skill Level` | spin | 20 | 0–20 | ниже 20: лимит узлов `256 << (уровень / 2)` и случайная добавка до `15 × (20 − уровень)` cp к оценкам ходов из корня; поиск в один поток |
 | `Style` | combo | balanced | balanced, aggressive, defensive, positional, materialistic | пресет из `engine/styles.txt`: множители групп и `Contempt` |
 | `Style Material` | spin | 100 | 0–300 | множитель группы, % |
@@ -90,3 +93,11 @@ info depth 9 seldepth 21 multipv 1 score cp 42 wdl 323 500 177 nodes 193734 nps 
 | `engine/bench.epd` | позиции `bench` |
 
 Файлы встраиваются в бинарник при сборке. Правила разработки — в `CLAUDE.md`.
+
+Таблицы Syzygy до 5 фигур (около 1 ГБ):
+
+```sh
+mkdir -p target/syzygy && cd target/syzygy
+curl -fsSL http://tablebase.sesse.net/syzygy/3-4-5/ | grep -oE 'K[A-Za-z]*v[A-Za-z]*\.rtb[wz]' | sort -u \
+  | xargs -I{} curl -fsSO http://tablebase.sesse.net/syzygy/3-4-5/{}
+```

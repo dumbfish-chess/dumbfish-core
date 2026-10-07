@@ -27,6 +27,12 @@ GUI живёт в другом репозитории и общается с д�
   `.` — рабочее дерево) и запускает UCI в терминале; `just build [ref]` кладёт бинарник в `target/play/dumbfish` для GUI.
 - `scripts/sprt.sh <base-ref> [<dev-ref>]` — SPRT `<dev-ref>` (по умолчанию рабочего дерева) против `<base-ref>`
   через fastchess (см. ниже).
+- Эндшпильные таблицы Syzygy читает свой код (`engine/src/syzygy/`). Таблицы до 5 фигур скачиваются в
+  `target/syzygy` (команда в `README.md`); тесты с ними (сверка с сервером таблиц lichess и согласованность
+  результата позиции с результатами ходов) по умолчанию пропускаются:
+  ```sh
+  cargo test --release -p dumbfish --test syzygy --test uci -- --include-ignored
+  ```
 
 ## Правила
 

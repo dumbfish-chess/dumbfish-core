@@ -38,6 +38,33 @@ impl Searcher<'_> {
             }
         }
 
+        if let Some(tb) = self.tablebases
+            && excluded.is_none()
+            && self.board.halfmove_clock() == 0
+            && let Some(wdl) = tb.probe_wdl(self.board)
+        {
+            let (score, bound) = match wdl {
+                2 => (TB_WIN - ply, Bound::Lower),
+                -2 => (ply - TB_WIN, Bound::Upper),
+                _ => (self.draw_score(ply), Bound::Exact),
+            };
+            let cutoff = match bound {
+                Bound::Lower => score >= beta,
+                Bound::Upper => score <= alpha,
+                _ => true,
+            };
+            if cutoff {
+                self.tt.store(Entry {
+                    key,
+                    best: None,
+                    score: score_to_tt(score, ply),
+                    depth: (depth + 6).min(MAX_DEPTH) as u8,
+                    bound,
+                });
+                return score;
+            }
+        }
+
         let in_check = self.board.in_check();
         if in_check && ply as u32 + depth < MAX_DEPTH {
             depth += 1;

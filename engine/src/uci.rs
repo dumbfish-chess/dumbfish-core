@@ -10,6 +10,7 @@ use crate::eval;
 use crate::search::{self, Iteration, Limits, MATE, MAX_DEPTH};
 use crate::skill::{self, Skill};
 use crate::style::{self, GROUPS, PRESETS, Style};
+use crate::syzygy::Tablebases;
 use crate::time;
 use crate::tt::{self, TranspositionTable};
 use crate::wdl;
@@ -27,6 +28,7 @@ pub fn run() {
         threads: 1,
         multipv: 1,
         show_wdl: false,
+        tablebases: None,
         stop: Arc::new(AtomicBool::new(false)),
         pondering: Arc::new(AtomicBool::new(false)),
         ponder: None,
@@ -49,6 +51,7 @@ pub fn run() {
                 println!("option name MultiPV type spin default 1 min 1 max {MAX_MULTIPV}");
                 println!("option name Ponder type check default false");
                 println!("option name UCI_ShowWDL type check default false");
+                println!("option name SyzygyPath type string default <empty>");
                 println!(
                     "option name Skill Level type spin default {0} min 0 max {0}",
                     skill::MAX_LEVEL
@@ -121,6 +124,7 @@ struct Engine {
     threads: usize,
     multipv: usize,
     show_wdl: bool,
+    tablebases: Option<Arc<Tablebases>>,
     stop: Arc<AtomicBool>,
     /// Set while a `go ponder` search waits for `ponderhit`.
     pondering: Arc<AtomicBool>,
@@ -200,6 +204,20 @@ impl Engine {
                 self.show_wdl = *value == "true";
                 Ok(())
             }
+            ("syzygypath", _) => {
+                let paths = value.join(" ");
+                let tablebases = match paths.as_str() {
+                    "" | "<empty>" => Tablebases::default(),
+                    paths => Tablebases::open(paths),
+                };
+                println!(
+                    "info string found {} tablebases, up to {} pieces",
+                    tablebases.len(),
+                    tablebases.max_pieces()
+                );
+                self.tablebases = (!tablebases.is_empty()).then(|| Arc::new(tablebases));
+                Ok(())
+            }
             ("threads", _) => {
                 self.threads = parse_in(&value, 1, MAX_THREADS as i32)? as usize;
                 Ok(())
@@ -231,6 +249,7 @@ impl Engine {
         limits.style = self.style;
         limits.threads = self.threads;
         limits.multipv = self.multipv;
+        limits.tablebases = self.tablebases.clone();
         let limits = Arc::new(limits);
         if go.ponder {
             self.ponder = Some((Arc::clone(&limits), go.budget));
