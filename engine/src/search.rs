@@ -606,14 +606,10 @@ impl<'a> Searcher<'a> {
         }
         alpha = alpha.max(stand_pat);
 
-        let mut moves = self.board.legal_moves();
+        let mut moves = self.board.legal_captures();
         order_moves(self.board, &mut moves);
-        let captures = moves
-            .iter()
-            .take_while(|&&mv| move_order_key(self.board, mv) > 0)
-            .count();
         let mut best = stand_pat;
-        for &mv in &moves[..captures] {
+        for &mv in moves.iter() {
             if see(self.board, mv) < 0 {
                 continue;
             }
