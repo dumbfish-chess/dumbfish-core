@@ -168,6 +168,7 @@ fn main_search(
                 };
                 found.push((mv, score, searcher.root_pv(mv)));
             }
+            found.sort_by_key(|&(_, score, _)| Reverse(score));
             if found.len() == lines {
                 scores = found.iter().map(|&(mv, score, _)| (mv, score)).collect();
             }
