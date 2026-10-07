@@ -3,21 +3,24 @@ use std::ops::{Deref, DerefMut};
 use crate::board::{BLACK_KINGSIDE, BLACK_QUEENSIDE, WHITE_KINGSIDE, WHITE_QUEENSIDE};
 use crate::{Bitboard, Board, Color, Move, MoveKind, PieceKind, Square, attacks};
 
-/// Fixed-capacity move list; no legal position has more than 218 moves.
+/// Fixed-capacity move list of up to 256 moves; no legal position has more than 218.
 pub struct MoveList {
     moves: [Move; 256],
     len: usize,
 }
 
-impl MoveList {
-    fn new() -> Self {
+impl Default for MoveList {
+    fn default() -> Self {
         Self {
             moves: [Move::new(Square::A1, Square::A1, MoveKind::Normal); 256],
             len: 0,
         }
     }
+}
 
-    fn push(&mut self, mv: Move) {
+impl MoveList {
+    /// Panics if the list already holds 256 moves.
+    pub fn push(&mut self, mv: Move) {
         self.moves[self.len] = mv;
         self.len += 1;
     }
@@ -65,7 +68,7 @@ impl Board {
 
     pub fn legal_moves(&self) -> MoveList {
         use PieceKind::*;
-        let mut list = MoveList::new();
+        let mut list = MoveList::default();
         let us = self.side_to_move();
         let king = self.king(us);
         let occupied = self.occupied();

@@ -1,4 +1,4 @@
-use dumbfish_core::{Board, MoveKind};
+use dumbfish_core::{Board, Move, MoveKind, MoveList, Square};
 
 /// The standard perft set (CPW), with the number of legal moves at the root.
 const POSITIONS: [(&str, usize); 6] = [
@@ -208,4 +208,13 @@ fn move_list_can_be_reordered() {
         moves.iter().map(|m| m.to_string()).collect::<Vec<_>>(),
         expected
     );
+}
+
+#[test]
+fn move_list_can_be_built() {
+    let mut list = MoveList::default();
+    assert!(list.is_empty());
+    let mv = Move::new(Square::E2, Square::E4, MoveKind::DoublePush);
+    list.push(mv);
+    assert_eq!(&list[..], [mv]);
 }
