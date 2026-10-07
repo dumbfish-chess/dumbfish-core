@@ -1,0 +1,26 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+      - name: Full perft suite
+        run: cargo test --release -p dumbfish-core --test perft -- --include-ignored
+      - name: Bench signature matches the commit message
+        run: |
+          nodes=$(cargo run --release -q -p dumbfish -- bench | awk '{print $1}')
+          echo "bench: $nodes"
+          expected=$(git log -1 --format=%B | sed -n 's/^Bench: //p')
+          if [ -n "$expected" ] && [ "$expected" != "$nodes" ]; then
+            echo "commit message says Bench: $expected"
+            exit 1
+          fi
