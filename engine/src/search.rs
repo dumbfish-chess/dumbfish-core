@@ -509,16 +509,17 @@ impl<'a> Searcher<'a> {
         best
     }
 
-    /// The move from the transposition table first, then captures and promotions by
-    /// `move_order_key`, then the killer moves of this ply, then the other quiet moves by
-    /// history.
+    /// The move from the transposition table first, then captures and promotions that do not
+    /// lose material by `move_order_key`, then the killer moves of this ply, then the other
+    /// quiet moves by history, and the captures that lose material last.
     fn order(&self, moves: &mut [Move], tt_move: Option<Move>, ply: i32) {
         let killers = self.killers[ply as usize];
         let history = &self.history[self.board.side_to_move().index()];
         moves.sort_by_key(|&mv| {
             Reverse(match move_order_key(self.board, mv) {
                 _ if Some(mv) == tt_move => i32::MAX,
-                tactical if tactical > 0 => 1_000_000 + tactical,
+                tactical if tactical > 0 && see(self.board, mv) >= 0 => 1_000_000 + tactical,
+                tactical if tactical > 0 => -1_000_000 + tactical,
                 _ if Some(mv) == killers[0] => 2 * MAX_HISTORY + 2,
                 _ if Some(mv) == killers[1] => 2 * MAX_HISTORY + 1,
                 _ => history[mv.from().index()][mv.to().index()],
