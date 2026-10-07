@@ -37,6 +37,20 @@ impl Move {
         Square::from_index((self.0 >> 6 & 63) as usize)
     }
 
+    /// The packed 16 bits, to store a move compactly.
+    pub const fn bits(self) -> u16 {
+        self.0
+    }
+
+    /// A move from `bits`; `None` if no move packs to them.
+    pub const fn from_bits(bits: u16) -> Option<Self> {
+        if bits >> 12 <= 7 {
+            Some(Self(bits))
+        } else {
+            None
+        }
+    }
+
     pub const fn kind(self) -> MoveKind {
         match self.0 >> 12 {
             0 => MoveKind::Normal,
