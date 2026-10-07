@@ -15,8 +15,10 @@ GUI живёт в другом репозитории и общается с д�
   `Style Mobility`, `Style King Attack`, `Style King Defense` (0–300 %) и `Contempt` (−200…200 cp, цена ничьей
   для стороны, ходящей в корне) переопределяют отдельные значения. Нестандартная команда `eval` — вклад каждого
   ненулевого признака и групп с учётом стиля.
-- `tuner/` (`dumbfish-tuner`) — подбор весов оценки методом Texel: `dumbfish-tuner <dataset.epd> <weights.txt> [epochs]`
-  переписывает файл весов. Датасет — `quiet-labeled.v7.epd` (Zurichess, 1.4M позиций с результатами партий):
+- `tuner/` (`dumbfish-tuner`) — подбор весов оценки методом Texel:
+  `dumbfish-tuner <dataset.epd> <weights.txt> [epochs] [--freeze=<группа>,...]` переписывает файл весов. Не трогает
+  веса групп из `--freeze` (имена как у групп стиля) и веса признаков, активных менее чем в 0.01 % позиций.
+  Датасет — `quiet-labeled.v7.epd` (Zurichess, 1.4M позиций с результатами партий):
   ```sh
   mkdir -p target/tuner && curl -fsSL https://bitbucket.org/zurichess/tuner/downloads/quiet-labeled.v7.epd.gz \
     | gzip -d > target/tuner/quiet-labeled.v7.epd
