@@ -87,3 +87,23 @@ fn stop_ends_every_thread() {
         start.elapsed()
     );
 }
+
+#[test]
+fn soft_deadline_stops_new_iterations() {
+    let limits = Limits {
+        depth: Some(10),
+        soft_deadline: Some(Instant::now()),
+        ..Limits::default()
+    };
+    let mut board = Board::from_fen(KIWIPETE).unwrap();
+    let tt = TranspositionTable::new(1);
+    let mut iterations = 0;
+    let (best, _) = search::search(&mut board, &limits, &AtomicBool::new(false), &tt, |_| {
+        iterations += 1
+    });
+    assert!(best.is_some());
+    assert_eq!(
+        iterations, 1,
+        "only the first iteration starts past the soft deadline"
+    );
+}

@@ -1,0 +1,42 @@
+use std::time::Duration;
+
+use dumbfish::time::{MOVE_OVERHEAD, allocate};
+
+fn ms(millis: u64) -> Duration {
+    Duration::from_millis(millis)
+}
+
+#[test]
+fn limits_stay_within_the_clock() {
+    for time in [0, 10, 30, 31, 100, 1_000, 60_000, 3_600_000] {
+        for inc in [0, 10, 100, 2_000] {
+            for moves_to_go in [None, Some(0), Some(1), Some(5), Some(40)] {
+                let (soft, hard) = allocate(ms(time), ms(inc), moves_to_go);
+                let available = ms(time).saturating_sub(MOVE_OVERHEAD);
+                assert!(
+                    soft <= hard && hard <= available,
+                    "{time}+{inc}/{moves_to_go:?}: {soft:?} {hard:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn allocation() {
+    assert_eq!(allocate(ms(60_000), ms(0), None), (ms(2_000), ms(6_000)));
+    assert_eq!(
+        allocate(ms(60_000), ms(1_000), None),
+        (ms(2_750), ms(8_250))
+    );
+    assert_eq!(
+        allocate(ms(10_000), ms(0), Some(1)),
+        (ms(9_970), ms(9_970)),
+        "last move before the control"
+    );
+    assert_eq!(
+        allocate(ms(20), ms(0), None),
+        (ms(0), ms(0)),
+        "less than the overhead"
+    );
+}

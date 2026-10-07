@@ -22,7 +22,10 @@ pub const MATE: i32 = 31_000;
 pub struct Limits {
     pub depth: Option<u32>,
     pub nodes: Option<u64>,
+    /// The search stops here.
     pub deadline: Option<Instant>,
+    /// No new iteration starts after this.
+    pub soft_deadline: Option<Instant>,
     /// Below `MAX_LEVEL`, adds the skill's node budget and picks the move with its noise; the
     /// search then runs on one thread.
     pub skill: Option<Skill>,
@@ -118,6 +121,14 @@ fn main_search(
     let mut best = moves.first().copied();
     let mut scores: Vec<(Move, i32)> = Vec::new();
     for depth in 1..=max_depth {
+        if depth > 1
+            && searcher
+                .limits
+                .soft_deadline
+                .is_some_and(|d| Instant::now() >= d)
+        {
+            break;
+        }
         let previous = scores.iter().map(|&(_, score)| score).max();
         let found = match skill {
             Some(_) => searcher.root_scores(depth, &moves),

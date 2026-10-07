@@ -3,5 +3,6 @@ pub mod eval;
 pub mod search;
 pub mod skill;
 pub mod style;
+pub mod time;
 pub mod tt;
 pub mod uci;

@@ -10,9 +10,9 @@ use crate::eval;
 use crate::search::{self, Iteration, Limits, MATE, MAX_DEPTH};
 use crate::skill::{self, Skill};
 use crate::style::{self, GROUPS, PRESETS, Style};
+use crate::time;
 use crate::tt::{self, TranspositionTable};
 
-const MOVE_OVERHEAD: Duration = Duration::from_millis(30);
 const MAX_THREADS: usize = 256;
 
 /// Reads UCI commands from stdin until `quit` or end of input.
@@ -293,8 +293,9 @@ fn parse_go<'a>(mut tokens: impl Iterator<Item = &'a str>, us: Color) -> (Limits
     if let Some(time) = time
         && limits.deadline.is_none()
     {
-        let budget = time / moves_to_go.unwrap_or(30) as u32 + inc / 2;
-        limits.deadline = Some(start + budget.min(time.saturating_sub(MOVE_OVERHEAD)));
+        let (soft, hard) = time::allocate(time, inc, moves_to_go.map(|n| n as u32));
+        limits.soft_deadline = Some(start + soft);
+        limits.deadline = Some(start + hard);
     }
     (limits, infinite)
 }
