@@ -475,3 +475,6 @@ king_attackers_4      107          90        0
 shield_near       14           8      -21
 shield_far        7          13      -21
 king_open_files      -22          -7      -12
+bishop_pair        0           0        0
+rook_open_file        0           0        0
+rook_semi_open_file        0           0        0

@@ -18,7 +18,9 @@
 //!   `king_attackers_<n>` (one per side: how many of those pieces attack the zone, 4 and more
 //!   counted as 4); and for the defender: `shield_near` and `shield_far` (own pawns one and two
 //!   squares in front of the king on its file and the adjacent ones), `king_open_files` (those
-//!   files without own pawns).
+//!   files without own pawns);
+//! - `bishop_pair` (two bishops or more), `rook_open_file` and `rook_semi_open_file` (per rook on
+//!   a file without pawns, or without own pawns only).
 
 use std::fmt::Write as _;
 use std::sync::LazyLock;
@@ -53,11 +55,16 @@ const KING_ATTACKERS: usize = KING_ATTACK + 4;
 const SHIELD_NEAR: usize = KING_ATTACKERS + 5;
 const SHIELD_FAR: usize = SHIELD_NEAR + 1;
 const KING_OPEN_FILES: usize = SHIELD_FAR + 1;
-pub const FEATURE_COUNT: usize = KING_OPEN_FILES + 1;
+const BISHOP_PAIR: usize = KING_OPEN_FILES + 1;
+const ROOK_OPEN_FILE: usize = BISHOP_PAIR + 1;
+const ROOK_SEMI_OPEN_FILE: usize = ROOK_OPEN_FILE + 1;
+pub const FEATURE_COUNT: usize = ROOK_SEMI_OPEN_FILE + 1;
 
 /// Index in `style::GROUPS` of the group a feature belongs to.
 pub fn group(index: usize) -> usize {
     match index {
+        BISHOP_PAIR => 0,
+        ROOK_OPEN_FILE | ROOK_SEMI_OPEN_FILE => 3,
         i if i < PIECE_SQUARE => 0,
         i if i < DOUBLED => 1,
         i if i < MOBILITY => 2,
@@ -86,6 +93,7 @@ pub static FEATURE_NAMES: LazyLock<Vec<String>> = LazyLock::new(|| {
     );
     names.extend((0..=4).map(|n| format!("king_attackers_{n}")));
     names.extend(["shield_near", "shield_far", "king_open_files"].map(String::from));
+    names.extend(["bishop_pair", "rook_open_file", "rook_semi_open_file"].map(String::from));
     names
 });
 
@@ -111,6 +119,25 @@ pub fn for_each_feature(board: &Board, mut f: impl FnMut(usize, i32)) {
         pawn_structure(board, color, |index| f(index, sign));
         mobility(board, color, |index| f(index, sign));
         king_safety(board, color, |index, value| f(index, sign * value));
+        pieces(board, color, |index| f(index, sign));
+    }
+}
+
+/// Calls `f(index)` for the bishop pair of `color` and once per rook of `color` on an open or
+/// half-open file.
+fn pieces(board: &Board, color: Color, mut f: impl FnMut(usize)) {
+    if board.pieces(color, PieceKind::Bishop).count() >= 2 {
+        f(BISHOP_PAIR);
+    }
+    let own_pawns = board.pieces(color, PieceKind::Pawn);
+    let pawns = board.kind_bb(PieceKind::Pawn);
+    for rook in board.pieces(color, PieceKind::Rook) {
+        let file = Bitboard::file(rook.file());
+        if (pawns & file).is_empty() {
+            f(ROOK_OPEN_FILE);
+        } else if (own_pawns & file).is_empty() {
+            f(ROOK_SEMI_OPEN_FILE);
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 use dumbfish::eval::{
     FEATURE_COUNT, FEATURE_NAMES, MAX_PHASE, blend, evaluate, evaluate_styled, evaluate_with,
-    explain, for_each_feature, format_weights, parse_weights, phase,
+    explain, for_each_feature, format_weights, group, parse_weights, phase,
 };
 use dumbfish::style::{GROUPS, PRESETS, Style, parse_presets};
 use dumbfish_core::{Board, Color, Piece, PieceKind, Square};
@@ -59,7 +59,7 @@ fn feature_names_are_unique() {
     assert_eq!(FEATURE_NAMES[5], "pawn_a1");
     assert_eq!(FEATURE_NAMES[5 + 6 * 64 - 1], "king_h8");
     assert_eq!(FEATURE_NAMES[5 + 6 * 64 + 3 + 5], "passed_7");
-    assert_eq!(FEATURE_NAMES[FEATURE_COUNT - 1], "king_open_files");
+    assert_eq!(FEATURE_NAMES[FEATURE_COUNT - 1], "rook_semi_open_file");
 }
 
 #[test]
@@ -630,4 +630,86 @@ fn presets_format() {
         let message = parse_presets(bad).err().unwrap();
         assert!(message.contains(error), "{message:?} for {bad:?}");
     }
+}
+
+/// Bishop pair and rook file features recomputed square by square.
+fn reference_pieces(board: &Board) -> Vec<(String, i32)> {
+    let mut values = std::collections::BTreeMap::<String, i32>::new();
+    let count = |piece: Piece| {
+        Square::ALL
+            .into_iter()
+            .filter(|&sq| board.piece_on(sq) == Some(piece))
+            .count()
+    };
+    for (color, sign) in [(Color::White, 1), (Color::Black, -1)] {
+        if count(Piece::new(color, PieceKind::Bishop)) >= 2 {
+            *values.entry("bishop_pair".into()).or_default() += sign;
+        }
+        for sq in Square::ALL {
+            if board.piece_on(sq) != Some(Piece::new(color, PieceKind::Rook)) {
+                continue;
+            }
+            let on_file = |c: Color| {
+                (0..8).any(|rank| {
+                    board.piece_on(Square::new(sq.file(), rank))
+                        == Some(Piece::new(c, PieceKind::Pawn))
+                })
+            };
+            let name = match (on_file(color), on_file(!color)) {
+                (false, false) => "rook_open_file",
+                (false, true) => "rook_semi_open_file",
+                _ => continue,
+            };
+            *values.entry(name.into()).or_default() += sign;
+        }
+    }
+    values.into_iter().filter(|&(_, v)| v != 0).collect()
+}
+
+#[test]
+fn piece_features_match_reference() {
+    let names = ["bishop_pair", "rook_open_file", "rook_semi_open_file"];
+    let mut state = 0xB15B_u64;
+    let mut next = move || {
+        state ^= state >> 12;
+        state ^= state << 25;
+        state ^= state >> 27;
+        state.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    };
+    let mut checked = 0;
+    for fen in POSITIONS {
+        let mut board = Board::from_fen(fen).unwrap();
+        for _ in 0..120 {
+            let mut values = vec![0; FEATURE_COUNT];
+            for_each_feature(&board, |index, value| values[index] += value);
+            let found: Vec<_> = (0..FEATURE_COUNT)
+                .filter(|&i| values[i] != 0 && names.contains(&FEATURE_NAMES[i].as_str()))
+                .map(|i| (FEATURE_NAMES[i].clone(), values[i]))
+                .collect();
+            let mut found = found;
+            found.sort();
+            assert_eq!(found, reference_pieces(&board), "{}", board.fen());
+            checked += 1;
+            let moves = board.legal_moves();
+            if moves.is_empty() {
+                break;
+            }
+            board.make_move(moves[next() as usize % moves.len()]);
+        }
+    }
+    assert!(checked > 500, "{checked}");
+}
+
+#[test]
+fn feature_groups() {
+    let group_of =
+        |name: &str| GROUPS[group(FEATURE_NAMES.iter().position(|n| n == name).unwrap())];
+    assert_eq!(group_of("queen"), "material");
+    assert_eq!(group_of("bishop_pair"), "material");
+    assert_eq!(group_of("knight_e4"), "positional");
+    assert_eq!(group_of("passed_7"), "pawns");
+    assert_eq!(group_of("mobility_rook_3"), "mobility");
+    assert_eq!(group_of("rook_open_file"), "mobility");
+    assert_eq!(group_of("king_attackers_4"), "king_attack");
+    assert_eq!(group_of("king_open_files"), "king_defense");
 }
