@@ -559,7 +559,11 @@ fn explain_scales_groups_by_style() {
     let fields: Vec<_> = material.split_whitespace().collect();
     let tuned: f64 = fields[1].parse().unwrap();
     assert_eq!(fields[2], "50%");
-    assert_eq!(fields[3], format!("{:.2}", tuned / 2.0));
+    let scaled: f64 = fields[3].parse().unwrap();
+    assert!(
+        (scaled - tuned / 2.0).abs() <= 0.01,
+        "{scaled} is half of {tuned} up to rounding"
+    );
     let stm = evaluate_styled(&board, &style);
     assert!(text.ends_with(&format!(
         "total: {} cp for white, {stm} cp for the side to move",
