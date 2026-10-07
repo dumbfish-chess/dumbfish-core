@@ -11,6 +11,8 @@ use crate::style::Style;
 use crate::tt::{Bound, Entry, TranspositionTable, score_from_tt, score_to_tt};
 
 pub const MAX_DEPTH: u32 = 64;
+/// Plies of the main search; quiescence search does not count them.
+const MAX_PLY: usize = MAX_DEPTH as usize + 1;
 const INFINITY: i32 = 32_000;
 /// Being mated `ply` plies from the root scores `ply - MATE`.
 pub const MATE: i32 = 31_000;
@@ -176,6 +178,8 @@ struct Searcher<'a> {
     flushed: u64,
     total_nodes: &'a AtomicU64,
     aborted: bool,
+    /// Two quiet moves per ply that caused beta cutoffs, most recent first.
+    killers: [[Option<Move>; 2]; MAX_PLY],
 }
 
 impl<'a> Searcher<'a> {
@@ -197,6 +201,7 @@ impl<'a> Searcher<'a> {
             flushed: 0,
             total_nodes,
             aborted: false,
+            killers: [[None; 2]; MAX_PLY],
         }
     }
 
@@ -295,13 +300,7 @@ impl<'a> Searcher<'a> {
         if depth == 0 {
             return self.quiescence(alpha, beta);
         }
-        order_moves(self.board, &mut moves);
-        if let Some(i) = moves
-            .iter()
-            .position(|&mv| Some(mv) == entry.and_then(|e| e.best))
-        {
-            moves[..=i].rotate_right(1);
-        }
+        self.order(&mut moves, entry.and_then(|e| e.best), ply);
 
         let original_alpha = alpha;
         let (mut best, mut best_move) = (-INFINITY, None);
@@ -317,6 +316,9 @@ impl<'a> Searcher<'a> {
             }
             alpha = alpha.max(score);
             if alpha >= beta {
+                if move_order_key(self.board, mv) == 0 {
+                    self.remember_killer(mv, ply);
+                }
                 break;
             }
         }
@@ -334,6 +336,31 @@ impl<'a> Searcher<'a> {
             bound,
         });
         best
+    }
+
+    /// The move from the transposition table first, then captures and promotions by
+    /// `move_order_key`, then the killer moves of this ply, then the other quiet moves in
+    /// generation order.
+    fn order(&self, moves: &mut [Move], tt_move: Option<Move>, ply: i32) {
+        let killers = self.killers[ply as usize];
+        moves.sort_by_key(|&mv| {
+            Reverse(match move_order_key(self.board, mv) {
+                _ if Some(mv) == tt_move => i32::MAX,
+                tactical if tactical > 0 => 1_000_000 + tactical,
+                _ if Some(mv) == killers[0] => 2,
+                _ if Some(mv) == killers[1] => 1,
+                _ => 0,
+            })
+        });
+    }
+
+    /// A quiet move that caused a beta cutoff, to be tried early in sibling nodes.
+    fn remember_killer(&mut self, mv: Move, ply: i32) {
+        let killers = &mut self.killers[ply as usize];
+        if killers[0] != Some(mv) {
+            killers[1] = killers[0];
+            killers[0] = Some(mv);
+        }
     }
 
     /// Score of the move just made, for the side that made it. The first move gets the full
