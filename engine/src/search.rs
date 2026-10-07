@@ -385,7 +385,15 @@ impl<'a> Searcher<'a> {
         for (i, &mv) in moves.iter().enumerate() {
             let quiet = move_order_key(self.board, mv) == 0;
             self.board.make_move(mv);
-            let late = i >= 3 && depth >= 3 && quiet && !in_check && !self.board.in_check();
+            let gives_check = self.board.in_check();
+            let futile = !pv
+                && depth <= 3
+                && static_eval.is_some_and(|eval| eval + 100 + 100 * depth as i32 <= alpha);
+            if futile && i > 0 && quiet && !gives_check {
+                self.board.unmake_move();
+                continue;
+            }
+            let late = i >= 3 && depth >= 3 && quiet && !in_check && !gives_check;
             let score = if late {
                 let reduced = (depth - 1).saturating_sub(reduction(depth, i + 1));
                 let score = -self.negamax(reduced, ply + 1, -alpha - 1, -alpha);
