@@ -6,13 +6,16 @@ use std::time::{Duration, Instant};
 use dumbfish_core::{Board, Move, MoveKind, MoveList, PieceKind, Square};
 
 use crate::eval;
-use crate::see::see;
+use crate::see::{piece_value, see};
 use crate::skill::{MAX_LEVEL, Skill};
 use crate::style::Style;
 use crate::tt::{Bound, Entry, TranspositionTable, score_from_tt, score_to_tt};
 
 pub const MAX_DEPTH: u32 = 64;
 const MAX_HISTORY: i32 = 16_384;
+/// A capture in quiescence search is skipped if even winning the captured piece and this much
+/// more cannot raise the score to alpha.
+const DELTA_MARGIN: i32 = 200;
 /// Plies of the main search; quiescence search does not count them.
 const MAX_PLY: usize = MAX_DEPTH as usize + 1;
 const INFINITY: i32 = 32_000;
@@ -613,6 +616,14 @@ impl<'a> Searcher<'a> {
         order_moves(self.board, &mut moves);
         let mut best = stand_pat;
         for &mv in moves.iter() {
+            let captured = match mv.kind() {
+                MoveKind::EnPassant => Some(PieceKind::Pawn),
+                _ => self.board.piece_on(mv.to()).map(|p| p.kind),
+            };
+            let promotion = matches!(mv.kind(), MoveKind::Promotion(_));
+            if !promotion && stand_pat + captured.map_or(0, piece_value) + DELTA_MARGIN <= alpha {
+                continue;
+            }
             if see(self.board, mv) < 0 {
                 continue;
             }

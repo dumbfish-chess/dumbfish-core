@@ -5,6 +5,11 @@ use dumbfish_core::{Board, Move, MoveKind, PieceKind, Square};
 /// Pawn, knight, bishop, rook, queen, king.
 const VALUE: [i32; 6] = [100, 300, 300, 500, 900, 20_000];
 
+/// The value of a piece in exchanges, in centipawns.
+pub fn piece_value(kind: PieceKind) -> i32 {
+    VALUE[kind.index()]
+}
+
 /// Material won by `mv`, a capture or promotion legal on `board`, when both sides keep
 /// recapturing on its square with their least valuable attacker and may stop whenever that
 /// is better. Sliders behind a capturing piece join in as it leaves the line. `gain[d]` is
