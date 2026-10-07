@@ -75,9 +75,10 @@ pub fn search(
                 let mut searcher =
                     Searcher::new(&mut board, limits, None, [stop, finished], tt, total_nodes);
                 for depth in (1 + helper % 2) as u32..=max_depth {
-                    if searcher.root(depth, &moves).is_none() {
+                    let Some((best, _)) = searcher.root(depth, &moves) else {
                         break;
-                    }
+                    };
+                    put_first(&mut moves, best);
                 }
                 searcher.flush_nodes();
             });
@@ -131,6 +132,7 @@ fn main_search(
             .expect("a finished iteration has moves");
         best = Some(mv);
         scores = found;
+        put_first(&mut moves, mv);
         on_iteration(&Iteration {
             depth,
             score,
@@ -144,6 +146,13 @@ fn main_search(
         best = skill.choose(&scores).or(best);
     }
     best
+}
+
+/// Moves `mv` to the front, keeping the order of the others.
+fn put_first(moves: &mut [Move], mv: Move) {
+    if let Some(i) = moves.iter().position(|&m| m == mv) {
+        moves[..=i].rotate_right(1);
+    }
 }
 
 /// Depth reduction of the `number`-th move (from 1) of a node searched to `depth`.
