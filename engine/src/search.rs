@@ -258,7 +258,7 @@ impl<'a> Searcher<'a> {
         (!scores.is_empty()).then_some(scores)
     }
 
-    fn negamax(&mut self, depth: u32, ply: i32, mut alpha: i32, beta: i32) -> i32 {
+    fn negamax(&mut self, mut depth: u32, ply: i32, mut alpha: i32, beta: i32) -> i32 {
         self.nodes += 1;
         if self.should_abort() {
             return 0;
@@ -280,7 +280,12 @@ impl<'a> Searcher<'a> {
             }
         }
 
-        if depth >= 3 && !self.board.in_check() && self.has_pieces() && self.evaluate() >= beta {
+        let in_check = self.board.in_check();
+        if in_check && ply as u32 + depth < MAX_DEPTH {
+            depth += 1;
+        }
+
+        if depth >= 3 && !in_check && self.has_pieces() && self.evaluate() >= beta {
             self.board.make_null_move();
             let score = -self.negamax(depth - 3, ply + 1, -beta, -beta + 1);
             self.board.unmake_null_move();
@@ -298,7 +303,7 @@ impl<'a> Searcher<'a> {
 
         let mut moves = self.board.legal_moves();
         if moves.is_empty() {
-            return if self.board.in_check() {
+            return if in_check {
                 ply - MATE
             } else {
                 self.draw_score(ply)
@@ -315,7 +320,6 @@ impl<'a> Searcher<'a> {
         let original_alpha = alpha;
         let (mut best, mut best_move) = (-INFINITY, None);
         let mut quiets_tried = MoveList::default();
-        let in_check = self.board.in_check();
         for (i, &mv) in moves.iter().enumerate() {
             let quiet = move_order_key(self.board, mv) == 0;
             self.board.make_move(mv);
