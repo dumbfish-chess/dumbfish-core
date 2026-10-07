@@ -40,6 +40,9 @@ impl Searcher<'_> {
         if in_check && ply as u32 + depth < MAX_DEPTH {
             depth += 1;
         }
+        if depth >= 4 && entry.and_then(|e| e.best).is_none() {
+            depth -= 1;
+        }
 
         let pv = beta - alpha > 1;
         let static_eval = (!in_check && depth > 0).then(|| self.evaluate());
