@@ -11,6 +11,7 @@ use crate::style::Style;
 use crate::tt::{Bound, Entry, TranspositionTable, score_from_tt, score_to_tt};
 
 pub const MAX_DEPTH: u32 = 64;
+const MAX_HISTORY: i32 = 16_384;
 /// Plies of the main search; quiescence search does not count them.
 const MAX_PLY: usize = MAX_DEPTH as usize + 1;
 const INFINITY: i32 = 32_000;
@@ -180,6 +181,9 @@ struct Searcher<'a> {
     aborted: bool,
     /// Two quiet moves per ply that caused beta cutoffs, most recent first.
     killers: [[Option<Move>; 2]; MAX_PLY],
+    /// How often a quiet move, by side, from and to square, caused cutoffs; within
+    /// `-MAX_HISTORY..=MAX_HISTORY`.
+    history: Box<[[[i32; 64]; 64]; 2]>,
 }
 
 impl<'a> Searcher<'a> {
@@ -202,6 +206,7 @@ impl<'a> Searcher<'a> {
             total_nodes,
             aborted: false,
             killers: [[None; 2]; MAX_PLY],
+            history: Box::new([[[0; 64]; 64]; 2]),
         }
     }
 
@@ -304,6 +309,7 @@ impl<'a> Searcher<'a> {
 
         let original_alpha = alpha;
         let (mut best, mut best_move) = (-INFINITY, None);
+        let mut quiets_tried = MoveList::default();
         for (i, &mv) in moves.iter().enumerate() {
             self.board.make_move(mv);
             let score = self.principal_variation(i == 0, depth - 1, ply + 1, alpha, beta);
@@ -315,11 +321,16 @@ impl<'a> Searcher<'a> {
                 (best, best_move) = (score, Some(mv));
             }
             alpha = alpha.max(score);
+            let quiet = move_order_key(self.board, mv) == 0;
             if alpha >= beta {
-                if move_order_key(self.board, mv) == 0 {
+                if quiet {
                     self.remember_killer(mv, ply);
+                    self.update_history(mv, &quiets_tried, depth);
                 }
                 break;
+            }
+            if quiet {
+                quiets_tried.push(mv);
             }
         }
 
@@ -339,19 +350,35 @@ impl<'a> Searcher<'a> {
     }
 
     /// The move from the transposition table first, then captures and promotions by
-    /// `move_order_key`, then the killer moves of this ply, then the other quiet moves in
-    /// generation order.
+    /// `move_order_key`, then the killer moves of this ply, then the other quiet moves by
+    /// history.
     fn order(&self, moves: &mut [Move], tt_move: Option<Move>, ply: i32) {
         let killers = self.killers[ply as usize];
+        let history = &self.history[self.board.side_to_move().index()];
         moves.sort_by_key(|&mv| {
             Reverse(match move_order_key(self.board, mv) {
                 _ if Some(mv) == tt_move => i32::MAX,
                 tactical if tactical > 0 => 1_000_000 + tactical,
-                _ if Some(mv) == killers[0] => 2,
-                _ if Some(mv) == killers[1] => 1,
-                _ => 0,
+                _ if Some(mv) == killers[0] => 2 * MAX_HISTORY + 2,
+                _ if Some(mv) == killers[1] => 2 * MAX_HISTORY + 1,
+                _ => history[mv.from().index()][mv.to().index()],
             })
         });
+    }
+
+    /// Rewards the quiet move that caused a beta cutoff and penalizes the quiet moves tried
+    /// before it, by `depth²`; values decay towards zero as they approach `MAX_HISTORY`.
+    fn update_history(&mut self, cutoff: Move, tried: &[Move], depth: u32) {
+        let bonus = (depth * depth).min(MAX_HISTORY as u32) as i32;
+        let history = &mut self.history[self.board.side_to_move().index()];
+        let mut update = |mv: Move, bonus: i32| {
+            let h = &mut history[mv.from().index()][mv.to().index()];
+            *h += bonus - *h * bonus.abs() / MAX_HISTORY;
+        };
+        update(cutoff, bonus);
+        for &mv in tried {
+            update(mv, -bonus);
+        }
     }
 
     /// A quiet move that caused a beta cutoff, to be tried early in sibling nodes.
