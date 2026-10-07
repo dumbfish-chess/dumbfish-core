@@ -263,6 +263,10 @@ struct Searcher<'a> {
     pv_len: [usize; MAX_PLY + 1],
     /// Deepest ply reached, quiescence search included.
     seldepth: u32,
+    /// The move made at each ply of the current line; `None` for a null move.
+    played: [Option<Move>; MAX_PLY + 1],
+    /// The quiet move that last refuted a move, by the piece that made it and its target square.
+    countermoves: Box<[[Option<Move>; 64]; 12]>,
 }
 
 impl<'a> Searcher<'a> {
@@ -291,6 +295,8 @@ impl<'a> Searcher<'a> {
             ),
             pv_len: [0; MAX_PLY + 1],
             seldepth: 0,
+            played: [None; MAX_PLY + 1],
+            countermoves: Box::new([[None; 64]; 12]),
         }
     }
 
@@ -340,6 +346,7 @@ impl<'a> Searcher<'a> {
         self.nodes += 1;
         let mut best: Option<(Move, i32)> = None;
         for (i, &mv) in moves.iter().enumerate() {
+            self.played[0] = Some(mv);
             self.board.make_move(mv);
             let score = self.principal_variation(i == 0, depth - 1, 1, alpha, beta);
             self.board.unmake_move();
@@ -366,6 +373,7 @@ impl<'a> Searcher<'a> {
         self.nodes += 1;
         let mut scores = Vec::with_capacity(moves.len());
         for &mv in moves {
+            self.played[0] = Some(mv);
             self.board.make_move(mv);
             let score = -self.negamax(depth - 1, 1, -INFINITY, INFINITY);
             self.board.unmake_move();
@@ -418,6 +426,7 @@ impl<'a> Searcher<'a> {
         }
 
         if depth >= 3 && self.has_pieces() && static_eval.is_some_and(|eval| eval >= beta) {
+            self.played[ply as usize] = None;
             self.board.make_null_move();
             let score = -self.negamax(depth - 3, ply + 1, -beta, -beta + 1);
             self.board.unmake_null_move();
@@ -454,6 +463,7 @@ impl<'a> Searcher<'a> {
         let mut quiets_tried = MoveList::default();
         for (i, &mv) in moves.iter().enumerate() {
             let quiet = move_order_key(self.board, mv) == 0;
+            self.played[ply as usize] = Some(mv);
             self.board.make_move(mv);
             let gives_check = self.board.in_check();
             let futile = !pv
@@ -491,6 +501,9 @@ impl<'a> Searcher<'a> {
             if alpha >= beta {
                 if quiet {
                     self.remember_killer(mv, ply);
+                    if let Some(slot) = self.countermove_slot(ply) {
+                        self.countermoves[slot.0][slot.1] = Some(mv);
+                    }
                     self.update_history(mv, &quiets_tried, depth);
                 }
                 break;
@@ -516,10 +529,14 @@ impl<'a> Searcher<'a> {
     }
 
     /// The move from the transposition table first, then captures and promotions that do not
-    /// lose material by `move_order_key`, then the killer moves of this ply, then the other
-    /// quiet moves by history, and the captures that lose material last.
+    /// lose material by `move_order_key`, then the killer moves of this ply and the countermove
+    /// to the last move, then the other quiet moves by history, and the captures that lose
+    /// material last.
     fn order(&self, moves: &mut [Move], tt_move: Option<Move>, ply: i32) {
         let killers = self.killers[ply as usize];
+        let countermove = self
+            .countermove_slot(ply)
+            .and_then(|(piece, to)| self.countermoves[piece][to]);
         let history = &self.history[self.board.side_to_move().index()];
         moves.sort_by_key(|&mv| {
             Reverse(match move_order_key(self.board, mv) {
@@ -528,6 +545,7 @@ impl<'a> Searcher<'a> {
                 tactical if tactical > 0 => -1_000_000 + tactical,
                 _ if Some(mv) == killers[0] => 2 * MAX_HISTORY + 2,
                 _ if Some(mv) == killers[1] => 2 * MAX_HISTORY + 1,
+                _ if Some(mv) == countermove => 2 * MAX_HISTORY,
                 _ => history[mv.from().index()][mv.to().index()],
             })
         });
@@ -546,6 +564,14 @@ impl<'a> Searcher<'a> {
         for &mv in tried {
             update(mv, -bonus);
         }
+    }
+
+    /// Index into `countermoves` for the move that led to the node at `ply`: the piece that made
+    /// it and its target square; `None` at the root and after a null move.
+    fn countermove_slot(&self, ply: i32) -> Option<(usize, usize)> {
+        let previous = self.played[(ply as usize).checked_sub(1)?]?;
+        let piece = self.board.piece_on(previous.to())?;
+        Some((piece.index(), previous.to().index()))
     }
 
     /// `mv` followed by the principal variation of the node it leads to becomes the principal
