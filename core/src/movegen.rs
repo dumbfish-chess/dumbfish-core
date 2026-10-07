@@ -67,6 +67,16 @@ impl Board {
     }
 
     pub fn legal_moves(&self) -> MoveList {
+        self.generate(false)
+    }
+
+    /// The legal captures, en passant captures and promotions, quiet promotions included, in
+    /// the order `legal_moves` gives them.
+    pub fn legal_captures(&self) -> MoveList {
+        self.generate(true)
+    }
+
+    fn generate(&self, captures_only: bool) -> MoveList {
         use PieceKind::*;
         let mut list = MoveList::default();
         let us = self.side_to_move();
@@ -74,10 +84,11 @@ impl Board {
         let occupied = self.occupied();
         let ours = self.color_bb(us);
         let theirs = self.color_bb(!us);
+        let targets = if captures_only { theirs } else { !ours };
         let attacked =
             |sq: Square, occupied: Bitboard| !(self.attackers_to(sq, occupied) & theirs).is_empty();
 
-        for to in attacks::king(king) & !ours {
+        for to in attacks::king(king) & targets {
             if !attacked(to, occupied ^ king.bb()) {
                 list.push(Move::new(king, to, MoveKind::Normal));
             }
@@ -98,16 +109,19 @@ impl Board {
         };
 
         for from in self.pieces(us, Knight) & !pinned {
-            list.push_all(from, attacks::knight(from) & !ours & evasions);
+            list.push_all(from, attacks::knight(from) & targets & evasions);
         }
         for from in self.pieces(us, Bishop) | self.pieces(us, Queen) {
             list.push_all(
                 from,
-                attacks::bishop(from, occupied) & !ours & allowed(from),
+                attacks::bishop(from, occupied) & targets & allowed(from),
             );
         }
         for from in self.pieces(us, Rook) | self.pieces(us, Queen) {
-            list.push_all(from, attacks::rook(from, occupied) & !ours & allowed(from));
+            list.push_all(
+                from,
+                attacks::rook(from, occupied) & targets & allowed(from),
+            );
         }
 
         let (start_rank, last_rank) = match us {
@@ -123,8 +137,10 @@ impl Board {
             let one = forward(from);
             let mut targets = attacks::pawn(us, from) & theirs;
             if !occupied.contains(one) {
-                targets |= one.bb();
-                if from.rank() == start_rank {
+                if !captures_only || one.rank() == last_rank {
+                    targets |= one.bb();
+                }
+                if !captures_only && from.rank() == start_rank {
                     let two = forward(one);
                     if !occupied.contains(two) && allowed.contains(two) {
                         list.push(Move::new(from, two, MoveKind::DoublePush));
@@ -152,7 +168,7 @@ impl Board {
             }
         }
 
-        if checkers.is_empty() {
+        if checkers.is_empty() && !captures_only {
             let (rank, kingside, queenside) = match us {
                 Color::White => (0, WHITE_KINGSIDE, WHITE_QUEENSIDE),
                 Color::Black => (7, BLACK_KINGSIDE, BLACK_QUEENSIDE),

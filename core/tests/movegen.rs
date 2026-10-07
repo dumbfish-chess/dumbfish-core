@@ -218,3 +218,41 @@ fn move_list_can_be_built() {
     list.push(mv);
     assert_eq!(&list[..], [mv]);
 }
+
+#[test]
+fn captures_are_the_tactical_legal_moves_in_order() {
+    let mut state = 0xFACE_u64;
+    let mut next = move || {
+        state ^= state >> 12;
+        state ^= state << 25;
+        state ^= state >> 27;
+        state.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    };
+    let mut checked = 0;
+    for (start, _) in POSITIONS {
+        let mut board = Board::from_fen(start).unwrap();
+        for _ in 0..150 {
+            let moves = board.legal_moves();
+            let tactical: Vec<Move> = moves
+                .iter()
+                .copied()
+                .filter(|m| {
+                    board.piece_on(m.to()).is_some()
+                        || matches!(m.kind(), MoveKind::EnPassant | MoveKind::Promotion(_))
+                })
+                .collect();
+            assert_eq!(
+                &board.legal_captures()[..],
+                &tactical[..],
+                "{}",
+                board.fen()
+            );
+            checked += 1;
+            if moves.is_empty() {
+                break;
+            }
+            board.make_move(moves[next() as usize % moves.len()]);
+        }
+    }
+    assert!(checked > 500, "{checked}");
+}
