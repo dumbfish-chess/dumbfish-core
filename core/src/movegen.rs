@@ -32,6 +32,17 @@ impl MoveList {
     }
 }
 
+impl FromIterator<Move> for MoveList {
+    /// Panics beyond 256 moves.
+    fn from_iter<I: IntoIterator<Item = Move>>(moves: I) -> Self {
+        let mut list = Self::default();
+        for mv in moves {
+            list.push(mv);
+        }
+        list
+    }
+}
+
 impl Deref for MoveList {
     type Target = [Move];
 
