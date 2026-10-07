@@ -74,6 +74,16 @@ impl TranspositionTable {
         slot.data.store(data, Ordering::Relaxed);
     }
 
+    /// Used entries among the first thousand slots, per mille.
+    pub fn hashfull(&self) -> usize {
+        let sample = &self.slots[..self.slots.len().min(1000)];
+        let used = sample
+            .iter()
+            .filter(|slot| slot.data.load(Ordering::Relaxed) >> 40 & 3 != 0)
+            .count();
+        used * 1000 / sample.len()
+    }
+
     fn index(&self, key: u64) -> usize {
         key as usize & (self.slots.len() - 1)
     }

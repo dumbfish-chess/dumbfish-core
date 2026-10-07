@@ -42,6 +42,10 @@ pub struct Iteration {
     pub depth: u32,
     /// Rank of this line among the best root moves, from 1; see `Limits::multipv`.
     pub multipv: usize,
+    /// Deepest ply the main thread reached, quiescence search included.
+    pub seldepth: u32,
+    /// Used transposition table entries, per mille.
+    pub hashfull: usize,
     pub score: i32,
     pub best: Move,
     /// The principal variation, starting with `best`.
@@ -178,6 +182,8 @@ fn main_search(
             on_iteration(&Iteration {
                 depth,
                 multipv: line + 1,
+                seldepth: searcher.seldepth,
+                hashfull: searcher.tt.hashfull(),
                 score,
                 best: mv,
                 pv,
@@ -250,6 +256,8 @@ struct Searcher<'a> {
     /// Triangular table of principal variations: `pv[ply][..pv_len[ply]]` for each ply.
     pv: Box<[[Move; MAX_PLY + 1]; MAX_PLY + 1]>,
     pv_len: [usize; MAX_PLY + 1],
+    /// Deepest ply reached, quiescence search included.
+    seldepth: u32,
 }
 
 impl<'a> Searcher<'a> {
@@ -277,6 +285,7 @@ impl<'a> Searcher<'a> {
                 [[Move::new(Square::A1, Square::A1, MoveKind::Normal); MAX_PLY + 1]; MAX_PLY + 1],
             ),
             pv_len: [0; MAX_PLY + 1],
+            seldepth: 0,
         }
     }
 
@@ -366,6 +375,7 @@ impl<'a> Searcher<'a> {
     fn negamax(&mut self, mut depth: u32, ply: i32, mut alpha: i32, beta: i32) -> i32 {
         self.pv_len[ply as usize] = 0;
         self.nodes += 1;
+        self.seldepth = self.seldepth.max(ply as u32);
         if self.should_abort() {
             return 0;
         }
@@ -430,7 +440,7 @@ impl<'a> Searcher<'a> {
             return self.draw_score(ply);
         }
         if depth == 0 {
-            return self.quiescence(alpha, beta);
+            return self.quiescence(ply, alpha, beta);
         }
         self.order(&mut moves, entry.and_then(|e| e.best), ply);
 
@@ -582,8 +592,9 @@ impl<'a> Searcher<'a> {
 
     /// Searches captures only, until the position is quiet; the side to move may also stand pat
     /// on the static evaluation.
-    fn quiescence(&mut self, mut alpha: i32, beta: i32) -> i32 {
+    fn quiescence(&mut self, ply: i32, mut alpha: i32, beta: i32) -> i32 {
         self.nodes += 1;
+        self.seldepth = self.seldepth.max(ply as u32);
         if self.should_abort() {
             return 0;
         }
@@ -602,7 +613,7 @@ impl<'a> Searcher<'a> {
         let mut best = stand_pat;
         for &mv in &moves[..captures] {
             self.board.make_move(mv);
-            let score = -self.quiescence(-beta, -alpha);
+            let score = -self.quiescence(ply + 1, -beta, -alpha);
             self.board.unmake_move();
             if self.aborted {
                 return 0;

@@ -318,10 +318,12 @@ fn print_info(it: &Iteration) {
     };
     let pv: Vec<_> = it.pv.iter().map(|m| m.to_string()).collect();
     println!(
-        "info depth {} multipv {} score {score} nodes {} nps {nps} time {} pv {}",
+        "info depth {} seldepth {} multipv {} score {score} nodes {} nps {nps} hashfull {} time {} pv {}",
         it.depth,
+        it.seldepth,
         it.multipv,
         it.nodes,
+        it.hashfull,
         it.elapsed.as_millis(),
         pv.join(" ")
     );

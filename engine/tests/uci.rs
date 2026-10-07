@@ -470,16 +470,12 @@ fn multipv_option() {
     engine.send("position startpos");
     engine.send("go depth 4");
     let lines = engine.read_until("bestmove");
-    assert!(
-        lines
-            .iter()
-            .any(|l| l.starts_with("info depth 4 multipv 1 ")),
-        "{lines:?}"
-    );
-    assert!(
-        lines
-            .iter()
-            .any(|l| l.starts_with("info depth 4 multipv 2 ")),
-        "{lines:?}"
-    );
+    for rank in ["multipv 1 ", "multipv 2 "] {
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with("info depth 4 ") && l.contains(rank)),
+            "{rank} in {lines:?}"
+        );
+    }
 }

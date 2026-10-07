@@ -188,3 +188,23 @@ fn multipv_is_capped_by_the_legal_moves() {
         assert_eq!(ranks, [1, 2, 3], "depth {depth}");
     }
 }
+
+#[test]
+fn iterations_report_seldepth_and_hashfull() {
+    let limits = Limits {
+        depth: Some(6),
+        ..Limits::default()
+    };
+    let mut board = Board::from_fen(KIWIPETE).unwrap();
+    let tt = TranspositionTable::new(1);
+    assert_eq!(tt.hashfull(), 0);
+    let mut reports = Vec::new();
+    search::search(&mut board, &limits, &AtomicBool::new(false), &tt, |it| {
+        reports.push((it.depth, it.seldepth, it.hashfull))
+    });
+    for (depth, seldepth, hashfull) in reports {
+        assert!(seldepth >= depth, "seldepth {seldepth} below depth {depth}");
+        assert!(hashfull <= 1000);
+    }
+    assert!(tt.hashfull() > 0, "the search stored entries");
+}
