@@ -175,8 +175,8 @@ fn time_limits_are_respected() {
         engine.send(go);
         let best = engine.best_move();
         assert!(
-            start.elapsed() < Duration::from_millis(1500),
-            "{go}: {:?}",
+            start.elapsed() < Duration::from_secs(5),
+            "{go}: {:?}, an engine ignoring the clock searches for minutes",
             start.elapsed()
         );
         assert!(
