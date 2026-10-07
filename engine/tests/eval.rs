@@ -59,7 +59,7 @@ fn feature_names_are_unique() {
     assert_eq!(FEATURE_NAMES[5], "pawn_a1");
     assert_eq!(FEATURE_NAMES[5 + 6 * 64 - 1], "king_h8");
     assert_eq!(FEATURE_NAMES[5 + 6 * 64 + 3 + 5], "passed_7");
-    assert_eq!(FEATURE_NAMES[FEATURE_COUNT - 1], "hanging");
+    assert_eq!(FEATURE_NAMES[FEATURE_COUNT - 1], "passed_enemy_king");
 }
 
 #[test]
@@ -227,6 +227,19 @@ fn reference_pawn_structure(board: &Board) -> Vec<(String, i32)> {
         };
         let (ours, theirs) = (pawns_of(color), pawns_of(!color));
         let theirs: Vec<_> = theirs.into_iter().map(|(f, r)| (f, 7 - r)).collect();
+        let king_of = |c: Color| {
+            let sq = board.king(c);
+            let rank = sq.rank() as i32;
+            (
+                sq.file() as i32,
+                if color == Color::White {
+                    rank
+                } else {
+                    7 - rank
+                },
+            )
+        };
+        let kings = [king_of(color), king_of(!color)];
         for &(file, rank) in &ours {
             let mut add = |name: String| *values.entry(name).or_default() += sign;
             let doubled = ours.iter().any(|&(f, r)| f == file && r > rank);
@@ -250,6 +263,19 @@ fn reference_pawn_structure(board: &Board) -> Vec<(String, i32)> {
             }
             if !doubled && !blocked {
                 add(format!("passed_{}", rank + 1));
+                if ours
+                    .iter()
+                    .any(|&(f, r)| (f - file).abs() == 1 && r == rank - 1)
+                {
+                    add("passed_supported".into());
+                }
+                for ((f, r), name) in kings
+                    .into_iter()
+                    .zip(["passed_own_king", "passed_enemy_king"])
+                {
+                    let distance = (f - file).abs().max((r - rank - 1).abs());
+                    *values.entry(name.into()).or_default() += sign * (rank - 1) * distance;
+                }
             }
         }
     }
@@ -277,13 +303,27 @@ fn pawn_structure_examples() {
     };
     assert_eq!(
         features("4k3/8/8/8/8/P7/P7/4K3 w - - 0 1"),
-        named(&[("doubled", 1), ("isolated", 2), ("passed_3", 1)]),
-        "a2 behind a3: doubled, both isolated, only a3 passed"
+        named(&[
+            ("doubled", 1),
+            ("isolated", 2),
+            ("passed_3", 1),
+            ("passed_enemy_king", 4),
+            ("passed_own_king", 4),
+        ]),
+        "a2 behind a3: doubled, both isolated, only a3 passed; both kings 4 moves from a4"
     );
     assert_eq!(
         features("4k3/8/8/4p3/2P5/3P4/8/4K3 w - - 0 1"),
-        named(&[("backward", 1), ("isolated", -1), ("passed_4", 1)]),
-        "d3 is backward: c4 is ahead and e5 controls d4; e5 is isolated and stopped by d3"
+        named(&[
+            ("backward", 1),
+            ("isolated", -1),
+            ("passed_4", 1),
+            ("passed_enemy_king", 2 * 3),
+            ("passed_own_king", 2 * 4),
+            ("passed_supported", 1),
+        ]),
+        "d3 is backward: c4 is ahead and e5 controls d4; e5 is isolated and stopped by d3; \
+         d3 defends the passed c4, the kings are 3 and 4 moves from c5"
     );
     assert_eq!(features(dumbfish_core::board::STARTPOS), named(&[]));
 }
@@ -794,4 +834,5 @@ fn feature_groups() {
     assert_eq!(group_of("king_attackers_4"), "king_attack");
     assert_eq!(group_of("king_open_files"), "king_defense");
     assert_eq!(group_of("hanging"), "mobility");
+    assert_eq!(group_of("passed_own_king"), "pawns");
 }

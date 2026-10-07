@@ -23,7 +23,10 @@
 //!   a file without pawns, or without own pawns only);
 //! - threats to enemy pieces other than pawns: `threat_by_pawn` (attacked by a pawn),
 //!   `threat_by_minor` (rooks and queens attacked by a knight or bishop), `threat_by_rook`
-//!   (queens attacked by a rook), `hanging` (attacked and not defended).
+//!   (queens attacked by a rook), `hanging` (attacked and not defended);
+//! - passed pawn details, per passed pawn: `passed_supported` (defended by an own pawn),
+//!   `passed_own_king` and `passed_enemy_king` (distance in king moves from the king to the
+//!   square in front of the pawn, times the pawn's rank counted from its side minus 2).
 
 use std::fmt::Write as _;
 use std::sync::LazyLock;
@@ -65,7 +68,10 @@ const THREAT_BY_PAWN: usize = ROOK_SEMI_OPEN_FILE + 1;
 const THREAT_BY_MINOR: usize = THREAT_BY_PAWN + 1;
 const THREAT_BY_ROOK: usize = THREAT_BY_MINOR + 1;
 const HANGING: usize = THREAT_BY_ROOK + 1;
-pub const FEATURE_COUNT: usize = HANGING + 1;
+const PASSED_SUPPORTED: usize = HANGING + 1;
+const PASSED_OWN_KING: usize = PASSED_SUPPORTED + 1;
+const PASSED_ENEMY_KING: usize = PASSED_OWN_KING + 1;
+pub const FEATURE_COUNT: usize = PASSED_ENEMY_KING + 1;
 
 /// Index in `style::GROUPS` of the group a feature belongs to.
 pub fn group(index: usize) -> usize {
@@ -73,6 +79,7 @@ pub fn group(index: usize) -> usize {
         BISHOP_PAIR => 0,
         ROOK_OPEN_FILE | ROOK_SEMI_OPEN_FILE => 3,
         THREAT_BY_PAWN..=HANGING => 3,
+        PASSED_SUPPORTED..=PASSED_ENEMY_KING => 2,
         i if i < PIECE_SQUARE => 0,
         i if i < DOUBLED => 1,
         i if i < MOBILITY => 2,
@@ -111,6 +118,7 @@ pub static FEATURE_NAMES: LazyLock<Vec<String>> = LazyLock::new(|| {
         ]
         .map(String::from),
     );
+    names.extend(["passed_supported", "passed_own_king", "passed_enemy_king"].map(String::from));
     names
 });
 
@@ -133,7 +141,7 @@ pub fn for_each_feature(board: &Board, mut f: impl FnMut(usize, i32)) {
                 );
             }
         }
-        pawn_structure(board, color, |index| f(index, sign));
+        pawn_structure(board, color, |index, value| f(index, sign * value));
         mobility(board, color, |index| f(index, sign));
         king_safety(board, color, |index, value| f(index, sign * value));
         pieces(board, color, |index| f(index, sign));
@@ -287,8 +295,13 @@ fn mobility(board: &Board, color: Color, mut f: impl FnMut(usize)) {
     }
 }
 
-/// Calls `f(index)` once per pawn of `color` and per pawn structure feature it has.
-fn pawn_structure(board: &Board, color: Color, mut f: impl FnMut(usize)) {
+/// Distance between squares in king moves.
+fn distance(a: Square, b: Square) -> i32 {
+    i32::from(a.file().abs_diff(b.file()).max(a.rank().abs_diff(b.rank())))
+}
+
+/// Calls `f(index, value)` once per pawn of `color` and per pawn structure feature it has.
+fn pawn_structure(board: &Board, color: Color, mut f: impl FnMut(usize, i32)) {
     let ours = board.pieces(color, PieceKind::Pawn);
     let theirs = board.pieces(!color, PieceKind::Pawn);
     for sq in ours {
@@ -304,23 +317,35 @@ fn pawn_structure(board: &Board, color: Color, mut f: impl FnMut(usize)) {
         let own_file = Bitboard::file(file);
         let adjacent = own_file.east() | own_file.west();
 
+        let stop = match color {
+            Color::White => Square::new(file, rank + 1),
+            Color::Black => Square::new(file, rank - 1),
+        };
+
         let doubled = !(ours & own_file & ahead).is_empty();
         if doubled {
-            f(DOUBLED);
+            f(DOUBLED, 1);
         }
         if (ours & adjacent).is_empty() {
-            f(ISOLATED);
-        } else if (ours & adjacent & !ahead).is_empty() {
-            let stop = match color {
-                Color::White => Square::new(file, rank + 1),
-                Color::Black => Square::new(file, rank - 1),
-            };
-            if !(attacks::pawn(color, stop) & theirs).is_empty() {
-                f(BACKWARD);
-            }
+            f(ISOLATED, 1);
+        } else if (ours & adjacent & !ahead).is_empty()
+            && !(attacks::pawn(color, stop) & theirs).is_empty()
+        {
+            f(BACKWARD, 1);
         }
         if !doubled && (theirs & (own_file | adjacent) & ahead).is_empty() {
-            f(PASSED + usize::from(relative_rank) - 1);
+            f(PASSED + usize::from(relative_rank) - 1, 1);
+            if !(attacks::pawn(!color, sq) & ours).is_empty() {
+                f(PASSED_SUPPORTED, 1);
+            }
+            let scale = i32::from(relative_rank) - 1;
+            if scale > 0 {
+                f(PASSED_OWN_KING, scale * distance(board.king(color), stop));
+                f(
+                    PASSED_ENEMY_KING,
+                    scale * distance(board.king(!color), stop),
+                );
+            }
         }
     }
 }

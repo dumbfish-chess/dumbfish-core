@@ -482,3 +482,6 @@ threat_by_pawn       35          19      -18
 threat_by_minor        9          23      -45
 threat_by_rook       56         -15      244
 hanging           9           6       -8
+passed_supported        0           0        0
+passed_own_king        0           0        0
+passed_enemy_king        0           0        0
