@@ -9,6 +9,7 @@ use crate::eval;
 use crate::see::{piece_value, see};
 use crate::skill::{MAX_LEVEL, Skill};
 use crate::style::Style;
+use crate::time::Deadline;
 use crate::tt::{Bound, Entry, TranspositionTable, score_from_tt, score_to_tt};
 
 pub const MAX_DEPTH: u32 = 64;
@@ -27,9 +28,9 @@ pub struct Limits {
     pub depth: Option<u32>,
     pub nodes: Option<u64>,
     /// The search stops here.
-    pub deadline: Option<Instant>,
+    pub deadline: Deadline,
     /// No new iteration starts after this.
-    pub soft_deadline: Option<Instant>,
+    pub soft_deadline: Deadline,
     /// Below `MAX_LEVEL`, adds the skill's node budget and picks the move with its noise; the
     /// search then runs on one thread.
     pub skill: Option<Skill>,
@@ -137,12 +138,7 @@ fn main_search(
     let lines = searcher.limits.multipv.clamp(1, moves.len().max(1));
     let mut scores: Vec<(Move, i32)> = Vec::new();
     for depth in 1..=max_depth {
-        if depth > 1
-            && searcher
-                .limits
-                .soft_deadline
-                .is_some_and(|d| Instant::now() >= d)
-        {
+        if depth > 1 && searcher.limits.soft_deadline.passed() {
             break;
         }
         let mut found = Vec::new();
@@ -722,7 +718,7 @@ impl<'a> Searcher<'a> {
             self.flush_nodes();
             self.aborted = self.aborted
                 || self.stops.iter().any(|s| s.load(Ordering::Relaxed))
-                || self.limits.deadline.is_some_and(|d| Instant::now() >= d);
+                || self.limits.deadline.passed();
         }
         self.aborted = self.aborted || self.node_limit.is_some_and(|n| self.nodes > n);
         self.aborted

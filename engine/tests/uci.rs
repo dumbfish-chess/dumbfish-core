@@ -135,7 +135,10 @@ fn finds_mate_in_one() {
         lines.iter().any(|l| l.contains("score mate 1 ")),
         "{lines:?}"
     );
-    assert_eq!(lines.last().unwrap(), "bestmove a1a8");
+    assert_eq!(
+        lines.last().unwrap().split_whitespace().nth(1),
+        Some("a1a8")
+    );
 }
 
 #[test]
@@ -222,7 +225,11 @@ fn takes_hanging_queen() {
     engine.send("position fen 4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1");
     engine.send("go depth 3");
     let lines = engine.read_until("bestmove");
-    assert_eq!(lines.last().unwrap(), "bestmove e4d5", "{lines:?}");
+    assert_eq!(
+        lines.last().unwrap().split_whitespace().nth(1),
+        Some("e4d5"),
+        "{lines:?}"
+    );
 }
 
 #[test]
@@ -285,7 +292,7 @@ fn hash_option() {
     );
     engine.send("setoption name Hash value 0");
     engine.send("setoption name Hash value lots");
-    engine.send("setoption name Ponder value true");
+    engine.send("setoption name UCI_Chess960 value true");
     engine.send("setoption name Hash value 1");
     engine.send("isready");
     let lines = engine.read_until("readyok");
@@ -478,4 +485,59 @@ fn multipv_option() {
             "{rank} in {lines:?}"
         );
     }
+}
+
+#[test]
+fn ponder_waits_for_ponderhit() {
+    let mut engine = Engine::start();
+    engine.send("uci");
+    let lines = engine.read_until("uciok");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l == "option name Ponder type check default false"),
+        "{lines:?}"
+    );
+    engine.send("position startpos moves e2e4");
+    engine.send("go ponder wtime 600 btime 600");
+    match engine.lines.recv_timeout(Duration::from_millis(1500)) {
+        Ok(line) => assert!(
+            !line.starts_with("bestmove"),
+            "bestmove while pondering: {line}"
+        ),
+        Err(e) => assert_eq!(e, RecvTimeoutError::Timeout),
+    }
+    let start = Instant::now();
+    engine.send("ponderhit");
+    let lines = engine.read_until("bestmove");
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        start.elapsed()
+    );
+    let fields: Vec<_> = lines.last().unwrap().split_whitespace().collect();
+    assert!(
+        is_legal(dumbfish_core::board::STARTPOS, &["e2e4"], fields[1]),
+        "{fields:?}"
+    );
+    if let [_, best, "ponder", reply] = fields[..] {
+        assert!(
+            is_legal(dumbfish_core::board::STARTPOS, &["e2e4", best], reply),
+            "{fields:?}"
+        );
+    }
+}
+
+#[test]
+fn stop_ends_pondering() {
+    let mut engine = Engine::start();
+    engine.send("position startpos");
+    engine.send("go ponder wtime 600 btime 600");
+    std::thread::sleep(Duration::from_millis(200));
+    engine.send("stop");
+    let best = engine.best_move();
+    assert!(
+        is_legal(dumbfish_core::board::STARTPOS, &[], &best),
+        "{best}"
+    );
 }

@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use dumbfish::search::{self, Limits, MATE};
 use dumbfish::skill::Skill;
+use dumbfish::time::Deadline;
 use dumbfish::tt::TranspositionTable;
 use dumbfish_core::{Board, Move};
 
@@ -92,7 +93,7 @@ fn stop_ends_every_thread() {
 fn soft_deadline_stops_new_iterations() {
     let limits = Limits {
         depth: Some(10),
-        soft_deadline: Some(Instant::now()),
+        soft_deadline: Deadline::at(Instant::now()),
         ..Limits::default()
     };
     let mut board = Board::from_fen(KIWIPETE).unwrap();

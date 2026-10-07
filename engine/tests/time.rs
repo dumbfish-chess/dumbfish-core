@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use dumbfish::time::{MOVE_OVERHEAD, allocate};
+use std::time::Instant;
+
+use dumbfish::time::{Deadline, MOVE_OVERHEAD, allocate};
 
 fn ms(millis: u64) -> Duration {
     Duration::from_millis(millis)
@@ -39,4 +41,17 @@ fn allocation() {
         (ms(0), ms(0)),
         "less than the overhead"
     );
+}
+
+#[test]
+fn deadlines() {
+    let deadline = Deadline::default();
+    assert!(!deadline.is_set() && !deadline.passed());
+    deadline.set(Some(Instant::now()));
+    assert!(deadline.is_set() && deadline.passed());
+    deadline.set(Some(Instant::now() + Duration::from_secs(60)));
+    assert!(deadline.is_set() && !deadline.passed());
+    deadline.set(None);
+    assert!(!deadline.is_set() && !deadline.passed());
+    assert!(Deadline::at(Instant::now()).passed());
 }

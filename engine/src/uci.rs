@@ -26,6 +26,8 @@ pub fn run() {
         threads: 1,
         multipv: 1,
         stop: Arc::new(AtomicBool::new(false)),
+        pondering: Arc::new(AtomicBool::new(false)),
+        ponder: None,
         worker: None,
     };
 
@@ -43,6 +45,7 @@ pub fn run() {
                 );
                 println!("option name Threads type spin default 1 min 1 max {MAX_THREADS}");
                 println!("option name MultiPV type spin default 1 min 1 max {MAX_MULTIPV}");
+                println!("option name Ponder type check default false");
                 println!(
                     "option name Skill Level type spin default {0} min 0 max {0}",
                     skill::MAX_LEVEL
@@ -95,6 +98,7 @@ pub fn run() {
                 engine.wait();
                 println!("{}", eval::explain(&engine.board, &engine.style));
             }
+            Some("ponderhit") => engine.ponderhit(),
             Some("stop") => engine.finish(),
             Some("quit") => break,
             Some(other) => println!("info string unknown command: {other}"),
@@ -114,6 +118,10 @@ struct Engine {
     threads: usize,
     multipv: usize,
     stop: Arc<AtomicBool>,
+    /// Set while a `go ponder` search waits for `ponderhit`.
+    pondering: Arc<AtomicBool>,
+    /// Limits and clock of the pondering search, applied at `ponderhit`.
+    ponder: Option<(Arc<Limits>, Option<Budget>)>,
     worker: Option<JoinHandle<TranspositionTable>>,
 }
 
@@ -124,6 +132,7 @@ impl Engine {
         if let Some(handle) = self.worker.take() {
             self.tt = Some(handle.join().expect("search thread panicked"));
         }
+        self.ponder = None;
     }
 
     /// Stops the running search, if any, and waits for its `bestmove`.
@@ -182,6 +191,7 @@ impl Engine {
                 self.style = preset.style;
                 Ok(())
             }
+            ("ponder", ["true" | "false"]) => Ok(()),
             ("threads", _) => {
                 self.threads = parse_in(&value, 1, MAX_THREADS as i32)? as usize;
                 Ok(())
@@ -200,7 +210,9 @@ impl Engine {
 
     /// Starts a search on a separate thread so that `stop` and `isready` stay responsive.
     fn go<'a>(&mut self, tokens: impl Iterator<Item = &'a str>) {
-        let (mut limits, infinite) = parse_go(tokens, self.board.side_to_move());
+        let start = Instant::now();
+        let go = parse_go(tokens, &self.board);
+        let mut limits = go.limits;
         let seed = SystemTime::UNIX_EPOCH
             .elapsed()
             .map_or(0, |t| t.as_nanos() as u64);
@@ -211,21 +223,51 @@ impl Engine {
         limits.style = self.style;
         limits.threads = self.threads;
         limits.multipv = self.multipv;
+        let limits = Arc::new(limits);
+        if go.ponder {
+            self.ponder = Some((Arc::clone(&limits), go.budget));
+        } else if let Some(budget) = go.budget {
+            budget.apply(&limits, start);
+        }
+
         self.stop.store(false, Ordering::Relaxed);
-        let stop = Arc::clone(&self.stop);
+        self.pondering.store(go.ponder, Ordering::Relaxed);
+        let (stop, pondering) = (Arc::clone(&self.stop), Arc::clone(&self.pondering));
+        let infinite = go.infinite;
         let mut board = self.board.clone();
         let tt = self.tt.take().expect("no search is running");
         self.worker = Some(thread::spawn(move || {
-            let (best, _) = search::search(&mut board, &limits, &stop, &tt, print_info);
-            while infinite && !stop.load(Ordering::Relaxed) {
+            let mut line = Vec::new();
+            let (best, _) = search::search(&mut board, &limits, &stop, &tt, |it| {
+                print_info(it);
+                if it.multipv == 1 {
+                    line.clone_from(&it.pv);
+                }
+            });
+            while (infinite || pondering.load(Ordering::Relaxed)) && !stop.load(Ordering::Relaxed) {
                 thread::sleep(Duration::from_millis(5));
             }
+            let ponder = match (best, &line[..]) {
+                (Some(best), [first, reply, ..]) if *first == best => format!(" ponder {reply}"),
+                _ => String::new(),
+            };
             println!(
-                "bestmove {}",
+                "bestmove {}{ponder}",
                 best.map_or("0000".to_string(), |m| m.to_string())
             );
             tt
         }));
+    }
+
+    /// The opponent played the expected move: the pondering search goes on as a normal one, on
+    /// the clock it was given, counted from now.
+    fn ponderhit(&mut self) {
+        if let Some((limits, budget)) = self.ponder.take() {
+            if let Some(budget) = budget {
+                budget.apply(&limits, Instant::now());
+            }
+            self.pondering.store(false, Ordering::Relaxed);
+        }
     }
 }
 
@@ -278,16 +320,40 @@ fn parse_position<'a>(mut tokens: impl Iterator<Item = &'a str>) -> Result<Board
 }
 
 /// Search limits and whether the search is infinite, from the arguments of `go`.
-fn parse_go<'a>(mut tokens: impl Iterator<Item = &'a str>, us: Color) -> (Limits, bool) {
-    let start = Instant::now();
+/// What `go` asked for.
+struct Go {
+    limits: Limits,
+    infinite: bool,
+    ponder: bool,
+    budget: Option<Budget>,
+}
+
+/// Time for a search on its own clock, counted from when it starts: at `go`, or at `ponderhit`
+/// for a search that began pondering.
+#[derive(Clone, Copy)]
+struct Budget {
+    soft: Option<Duration>,
+    hard: Duration,
+}
+
+impl Budget {
+    fn apply(self, limits: &Limits, from: Instant) {
+        limits.soft_deadline.set(self.soft.map(|soft| from + soft));
+        limits.deadline.set(Some(from + self.hard));
+    }
+}
+
+fn parse_go<'a>(mut tokens: impl Iterator<Item = &'a str>, board: &Board) -> Go {
+    let us = board.side_to_move();
     let mut limits = Limits::default();
-    let (mut time, mut inc, mut moves_to_go, mut infinite) = (None, Duration::ZERO, None, false);
+    let (mut time, mut inc, mut moves_to_go, mut movetime) = (None, Duration::ZERO, None, None);
+    let (mut infinite, mut ponder) = (false, false);
     while let Some(token) = tokens.next() {
         let mut number = || tokens.next().and_then(|v| v.parse::<u64>().ok());
         match token {
             "depth" => limits.depth = number().map(|d| d as u32),
             "nodes" => limits.nodes = number(),
-            "movetime" => limits.deadline = number().map(|ms| start + Duration::from_millis(ms)),
+            "movetime" => movetime = number().map(Duration::from_millis),
             "wtime" | "btime" if (token == "wtime") == (us == Color::White) => {
                 time = number().map(Duration::from_millis)
             }
@@ -296,17 +362,27 @@ fn parse_go<'a>(mut tokens: impl Iterator<Item = &'a str>, us: Color) -> (Limits
             }
             "movestogo" => moves_to_go = number().filter(|&n| n > 0),
             "infinite" => infinite = true,
+            "ponder" => ponder = true,
             _ => {}
         }
     }
-    if let Some(time) = time
-        && limits.deadline.is_none()
-    {
-        let (soft, hard) = time::allocate(time, inc, moves_to_go.map(|n| n as u32));
-        limits.soft_deadline = Some(start + soft);
-        limits.deadline = Some(start + hard);
+    let budget = match (movetime, time) {
+        (Some(hard), _) => Some(Budget { soft: None, hard }),
+        (None, Some(time)) => {
+            let (soft, hard) = time::allocate(time, inc, moves_to_go.map(|n| n as u32));
+            Some(Budget {
+                soft: Some(soft),
+                hard,
+            })
+        }
+        (None, None) => None,
+    };
+    Go {
+        limits,
+        infinite,
+        ponder,
+        budget,
     }
-    (limits, infinite)
 }
 
 fn print_info(it: &Iteration) {
