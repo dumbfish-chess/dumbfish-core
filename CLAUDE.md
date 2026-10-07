@@ -19,6 +19,8 @@ GUI живёт в другом репозитории и общается с д�
 - `tools/` (`dumbfish-tools`) — вспомогательные утилиты:
   - `magics` — генерация magic-чисел для `core/src/attacks.rs`;
   - `perft <depth> [fen]` — perft с разбивкой по ходам из корня (для поиска расхождений с эталонным движком).
+- `justfile`: `just uci [ref]` собирает движок из ветки или коммита (по умолчанию — последней изменённой ветки,
+  `.` — рабочее дерево) и запускает UCI в терминале; `just build [ref]` кладёт бинарник в `target/play/dumbfish` для GUI.
 - `scripts/sprt.sh <base-ref> [<dev-ref>]` — SPRT `<dev-ref>` (по умолчанию рабочего дерева) против `<base-ref>`
   через fastchess (см. ниже).
 
