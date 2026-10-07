@@ -455,7 +455,9 @@ impl<'a> Searcher<'a> {
             let futile = !pv
                 && depth <= 3
                 && static_eval.is_some_and(|eval| eval + 100 + 100 * depth as i32 <= alpha);
-            if futile && i > 0 && quiet && !gives_check {
+            let late_quiet =
+                !pv && !in_check && depth <= 3 && quiets_tried.len() as u32 >= 3 + depth * depth;
+            if (futile || late_quiet) && i > 0 && quiet && !gives_check {
                 self.board.unmake_move();
                 continue;
             }
