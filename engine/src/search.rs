@@ -75,7 +75,7 @@ pub fn search(
                 let mut searcher =
                     Searcher::new(&mut board, limits, None, [stop, finished], tt, total_nodes);
                 for depth in (1 + helper % 2) as u32..=max_depth {
-                    let Some((best, _)) = searcher.root(depth, &moves) else {
+                    let Some((best, _)) = searcher.root(depth, &moves, -INFINITY, INFINITY) else {
                         break;
                     };
                     put_first(&mut moves, best);
@@ -116,11 +116,14 @@ fn main_search(
     let mut moves = searcher.board.legal_moves();
     order_moves(searcher.board, &mut moves);
     let mut best = moves.first().copied();
-    let mut scores = Vec::new();
+    let mut scores: Vec<(Move, i32)> = Vec::new();
     for depth in 1..=max_depth {
+        let previous = scores.iter().map(|&(_, score)| score).max();
         let found = match skill {
             Some(_) => searcher.root_scores(depth, &moves),
-            None => searcher.root(depth, &moves).map(|best| vec![best]),
+            None => searcher
+                .aspiration(depth, &moves, previous)
+                .map(|best| vec![best]),
         };
         let Some(found) = found else {
             break;
@@ -230,21 +233,60 @@ impl<'a> Searcher<'a> {
         self.flushed = self.nodes;
     }
 
-    /// Best root move and its score; `None` if aborted or there are no moves.
-    fn root(&mut self, depth: u32, moves: &MoveList) -> Option<(Move, i32)> {
+    /// Root search with an aspiration window around the previous iteration's score, widened
+    /// on the failing side until the score falls inside it.
+    fn aspiration(
+        &mut self,
+        depth: u32,
+        moves: &MoveList,
+        previous: Option<i32>,
+    ) -> Option<(Move, i32)> {
+        let mut delta = 25;
+        let (mut alpha, mut beta) = match previous {
+            Some(score) if depth >= 5 && score.abs() < MATE - MAX_DEPTH as i32 => {
+                (score - delta, score + delta)
+            }
+            _ => (-INFINITY, INFINITY),
+        };
+        loop {
+            let (mv, score) = self.root(depth, moves, alpha, beta)?;
+            if score <= alpha && alpha > -INFINITY {
+                alpha = (alpha - delta).max(-INFINITY);
+            } else if score >= beta && beta < INFINITY {
+                beta = (beta + delta).min(INFINITY);
+            } else {
+                return Some((mv, score));
+            }
+            delta *= 2;
+        }
+    }
+
+    /// Best root move and its fail-soft score within `alpha..beta`; `None` if aborted or there
+    /// are no moves.
+    fn root(
+        &mut self,
+        depth: u32,
+        moves: &MoveList,
+        mut alpha: i32,
+        beta: i32,
+    ) -> Option<(Move, i32)> {
         self.nodes += 1;
-        let mut best = None;
-        let mut alpha = -INFINITY;
+        let mut best: Option<(Move, i32)> = None;
         for (i, &mv) in moves.iter().enumerate() {
             self.board.make_move(mv);
-            let score = self.principal_variation(i == 0, depth - 1, 1, alpha, INFINITY);
+            let score = self.principal_variation(i == 0, depth - 1, 1, alpha, beta);
             self.board.unmake_move();
             if self.aborted {
                 return None;
             }
+            if best.is_none_or(|(_, b)| score > b) {
+                best = Some((mv, score));
+            }
             if score > alpha {
                 alpha = score;
-                best = Some((mv, score));
+                if score >= beta {
+                    break;
+                }
             }
         }
         best
