@@ -1,0 +1,2 @@
+# a b: win = sigmoid((cp - a) / b), loss = sigmoid((-cp - a) / b); dumbfish-tools wdl, quiet-labeled.v7
+120.0 105.3

@@ -550,3 +550,34 @@ fn searchmoves_restricts_the_root() {
     let best = engine.best_move();
     assert!(best == "a2a3" || best == "h2h3", "{best}");
 }
+
+#[test]
+fn show_wdl_option() {
+    let mut engine = Engine::start();
+    engine.send("uci");
+    let lines = engine.read_until("uciok");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l == "option name UCI_ShowWDL type check default false"),
+        "{lines:?}"
+    );
+    engine.send("position startpos");
+    engine.send("go depth 2");
+    let lines = engine.read_until("bestmove");
+    assert!(!lines.iter().any(|l| l.contains(" wdl ")), "{lines:?}");
+    engine.send("setoption name UCI_ShowWDL value true");
+    engine.send("go depth 2");
+    let lines = engine.read_until("bestmove");
+    let info = lines
+        .iter()
+        .find(|l| l.starts_with("info depth 2 "))
+        .unwrap();
+    let fields: Vec<_> = info.split_whitespace().collect();
+    let at = fields.iter().position(|&f| f == "wdl").unwrap();
+    let sum: u32 = fields[at + 1..at + 4]
+        .iter()
+        .map(|v| v.parse::<u32>().unwrap())
+        .sum();
+    assert_eq!(sum, 1000, "{info}");
+}

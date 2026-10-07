@@ -7,3 +7,4 @@ pub mod style;
 pub mod time;
 pub mod tt;
 pub mod uci;
+pub mod wdl;

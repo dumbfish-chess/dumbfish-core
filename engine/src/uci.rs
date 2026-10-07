@@ -12,6 +12,7 @@ use crate::skill::{self, Skill};
 use crate::style::{self, GROUPS, PRESETS, Style};
 use crate::time;
 use crate::tt::{self, TranspositionTable};
+use crate::wdl;
 
 const MAX_THREADS: usize = 256;
 const MAX_MULTIPV: usize = 256;
@@ -25,6 +26,7 @@ pub fn run() {
         style: PRESETS[0].style,
         threads: 1,
         multipv: 1,
+        show_wdl: false,
         stop: Arc::new(AtomicBool::new(false)),
         pondering: Arc::new(AtomicBool::new(false)),
         ponder: None,
@@ -46,6 +48,7 @@ pub fn run() {
                 println!("option name Threads type spin default 1 min 1 max {MAX_THREADS}");
                 println!("option name MultiPV type spin default 1 min 1 max {MAX_MULTIPV}");
                 println!("option name Ponder type check default false");
+                println!("option name UCI_ShowWDL type check default false");
                 println!(
                     "option name Skill Level type spin default {0} min 0 max {0}",
                     skill::MAX_LEVEL
@@ -117,6 +120,7 @@ struct Engine {
     style: Style,
     threads: usize,
     multipv: usize,
+    show_wdl: bool,
     stop: Arc<AtomicBool>,
     /// Set while a `go ponder` search waits for `ponderhit`.
     pondering: Arc<AtomicBool>,
@@ -192,6 +196,10 @@ impl Engine {
                 Ok(())
             }
             ("ponder", ["true" | "false"]) => Ok(()),
+            ("uci_showwdl", [value @ ("true" | "false")]) => {
+                self.show_wdl = *value == "true";
+                Ok(())
+            }
             ("threads", _) => {
                 self.threads = parse_in(&value, 1, MAX_THREADS as i32)? as usize;
                 Ok(())
@@ -234,12 +242,13 @@ impl Engine {
         self.pondering.store(go.ponder, Ordering::Relaxed);
         let (stop, pondering) = (Arc::clone(&self.stop), Arc::clone(&self.pondering));
         let infinite = go.infinite;
+        let show_wdl = self.show_wdl;
         let mut board = self.board.clone();
         let tt = self.tt.take().expect("no search is running");
         self.worker = Some(thread::spawn(move || {
             let mut line = Vec::new();
             let (best, _) = search::search(&mut board, &limits, &stop, &tt, |it| {
-                print_info(it);
+                print_info(it, show_wdl);
                 if it.multipv == 1 {
                     line.clone_from(&it.pv);
                 }
@@ -396,12 +405,18 @@ fn parse_go<'a>(tokens: impl Iterator<Item = &'a str>, board: &Board) -> Go {
     }
 }
 
-fn print_info(it: &Iteration) {
+fn print_info(it: &Iteration, show_wdl: bool) {
     let nps = (it.nodes as f64 / it.elapsed.as_secs_f64().max(1e-3)) as u64;
     let score = match it.score {
         s if s >= MATE - MAX_DEPTH as i32 => format!("mate {}", (MATE - s + 1) / 2),
         s if s <= MAX_DEPTH as i32 - MATE => format!("mate -{}", (MATE + s) / 2),
         s => format!("cp {s}"),
+    };
+    let score = if show_wdl {
+        let [win, draw, loss] = wdl::MODEL.wdl(it.score);
+        format!("{score} wdl {win} {draw} {loss}")
+    } else {
+        score
     };
     let pv: Vec<_> = it.pv.iter().map(|m| m.to_string()).collect();
     println!(
