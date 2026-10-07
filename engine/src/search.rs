@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use dumbfish_core::{Board, Move, MoveKind, MoveList, PieceKind};
+use dumbfish_core::{Board, Move, MoveKind, MoveList, PieceKind, Square};
 
 use crate::eval;
 use crate::skill::{MAX_LEVEL, Skill};
@@ -39,6 +39,8 @@ pub struct Iteration {
     pub depth: u32,
     pub score: i32,
     pub best: Move,
+    /// The principal variation, starting with `best`.
+    pub pv: Vec<Move>,
     pub nodes: u64,
     pub elapsed: Duration,
 }
@@ -151,6 +153,7 @@ fn main_search(
             depth,
             score,
             best: mv,
+            pv: searcher.root_pv(mv),
             nodes: searcher.total_nodes.load(Ordering::Relaxed) + searcher.nodes - searcher.flushed,
             elapsed: start.elapsed(),
         });
@@ -212,6 +215,9 @@ struct Searcher<'a> {
     /// How often a quiet move, by side, from and to square, caused cutoffs; within
     /// `-MAX_HISTORY..=MAX_HISTORY`.
     history: Box<[[[i32; 64]; 64]; 2]>,
+    /// Triangular table of principal variations: `pv[ply][..pv_len[ply]]` for each ply.
+    pv: Box<[[Move; MAX_PLY + 1]; MAX_PLY + 1]>,
+    pv_len: [usize; MAX_PLY + 1],
 }
 
 impl<'a> Searcher<'a> {
@@ -235,6 +241,10 @@ impl<'a> Searcher<'a> {
             aborted: false,
             killers: [[None; 2]; MAX_PLY],
             history: Box::new([[[0; 64]; 64]; 2]),
+            pv: Box::new(
+                [[Move::new(Square::A1, Square::A1, MoveKind::Normal); MAX_PLY + 1]; MAX_PLY + 1],
+            ),
+            pv_len: [0; MAX_PLY + 1],
         }
     }
 
@@ -295,6 +305,7 @@ impl<'a> Searcher<'a> {
             }
             if score > alpha {
                 alpha = score;
+                self.update_pv(0, mv);
                 if score >= beta {
                     break;
                 }
@@ -321,6 +332,7 @@ impl<'a> Searcher<'a> {
     }
 
     fn negamax(&mut self, mut depth: u32, ply: i32, mut alpha: i32, beta: i32) -> i32 {
+        self.pv_len[ply as usize] = 0;
         self.nodes += 1;
         if self.should_abort() {
             return 0;
@@ -423,7 +435,10 @@ impl<'a> Searcher<'a> {
             if score > best {
                 (best, best_move) = (score, Some(mv));
             }
-            alpha = alpha.max(score);
+            if score > alpha {
+                alpha = score;
+                self.update_pv(ply, mv);
+            }
             if alpha >= beta {
                 if quiet {
                     self.remember_killer(mv, ply);
@@ -480,6 +495,25 @@ impl<'a> Searcher<'a> {
         update(cutoff, bonus);
         for &mv in tried {
             update(mv, -bonus);
+        }
+    }
+
+    /// `mv` followed by the principal variation of the node it leads to becomes the principal
+    /// variation of the node at `ply`.
+    fn update_pv(&mut self, ply: i32, mv: Move) {
+        let ply = ply as usize;
+        let child_len = self.pv_len[ply + 1];
+        let (head, tail) = self.pv.split_at_mut(ply + 1);
+        head[ply][0] = mv;
+        head[ply][1..=child_len].copy_from_slice(&tail[0][..child_len]);
+        self.pv_len[ply] = child_len + 1;
+    }
+
+    /// The principal variation of the root, or just `best` if none is known.
+    fn root_pv(&self, best: Move) -> Vec<Move> {
+        match self.pv_len[0] {
+            0 => vec![best],
+            len => self.pv[0][..len].to_vec(),
         }
     }
 

@@ -107,3 +107,28 @@ fn soft_deadline_stops_new_iterations() {
         "only the first iteration starts past the soft deadline"
     );
 }
+
+#[test]
+fn principal_variation_is_a_legal_line_from_the_best_move() {
+    for fen in [KIWIPETE, MATE_IN_TWO, dumbfish_core::board::STARTPOS] {
+        let limits = Limits {
+            depth: Some(7),
+            ..Limits::default()
+        };
+        let mut board = Board::from_fen(fen).unwrap();
+        let tt = TranspositionTable::new(4);
+        let mut lines = Vec::new();
+        search::search(&mut board, &limits, &AtomicBool::new(false), &tt, |it| {
+            lines.push((it.best, it.pv.clone()))
+        });
+        assert!(!lines.is_empty());
+        for (best, pv) in lines {
+            assert_eq!(pv.first(), Some(&best), "{fen}");
+            let mut line = Board::from_fen(fen).unwrap();
+            for mv in &pv {
+                assert!(line.legal_moves().contains(mv), "{fen}: {mv} in {pv:?}");
+                line.make_move(*mv);
+            }
+        }
+    }
+}

@@ -307,11 +307,12 @@ fn print_info(it: &Iteration) {
         s if s <= MAX_DEPTH as i32 - MATE => format!("mate -{}", (MATE + s) / 2),
         s => format!("cp {s}"),
     };
+    let pv: Vec<_> = it.pv.iter().map(|m| m.to_string()).collect();
     println!(
         "info depth {} score {score} nodes {} nps {nps} time {} pv {}",
         it.depth,
         it.nodes,
         it.elapsed.as_millis(),
-        it.best
+        pv.join(" ")
     );
 }
