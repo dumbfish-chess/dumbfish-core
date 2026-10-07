@@ -24,7 +24,9 @@ impl Searcher<'_> {
         }
         let key = self.board.hash();
         let entry = self.tt.probe(key);
+        let excluded = self.excluded[ply as usize];
         if let Some(e) = entry
+            && excluded.is_none()
             && u32::from(e.depth) >= depth
         {
             let score = score_from_tt(e.score, ply);
@@ -48,6 +50,7 @@ impl Searcher<'_> {
         let static_eval = (!in_check && depth > 0).then(|| self.evaluate());
         if let Some(eval) = static_eval
             && !pv
+            && excluded.is_none()
             && depth <= 6
             && beta.abs() < MATE - MAX_DEPTH as i32
             && eval - 80 * depth as i32 >= beta
@@ -55,7 +58,11 @@ impl Searcher<'_> {
             return eval;
         }
 
-        if depth >= 3 && self.has_pieces() && static_eval.is_some_and(|eval| eval >= beta) {
+        if depth >= 3
+            && excluded.is_none()
+            && self.has_pieces()
+            && static_eval.is_some_and(|eval| eval >= beta)
+        {
             self.played[ply as usize] = None;
             self.board.make_null_move();
             let score = -self.negamax(depth - 3, ply + 1, -beta, -beta + 1);
@@ -86,12 +93,25 @@ impl Searcher<'_> {
         if depth == 0 {
             return self.quiescence(ply, alpha, beta);
         }
-        self.order(&mut moves, entry.and_then(|e| e.best), ply);
+        let tt_move = entry.and_then(|e| e.best);
+        self.order(&mut moves, tt_move, ply);
 
         let original_alpha = alpha;
         let (mut best, mut best_move) = (-INFINITY, None);
         let mut quiets_tried = MoveList::default();
         for (i, &mv) in moves.iter().enumerate() {
+            if Some(mv) == excluded {
+                continue;
+            }
+            let extension = match entry {
+                Some(e) if i == 0 && Some(mv) == tt_move && excluded.is_none() => {
+                    self.singular_extension(e, depth, ply)
+                }
+                _ => 0,
+            };
+            if self.aborted {
+                return 0;
+            }
             let quiet = move_order_key(self.board, mv) == 0;
             self.played[ply as usize] = Some(mv);
             self.board.make_move(mv);
@@ -115,7 +135,7 @@ impl Searcher<'_> {
                     score
                 }
             } else {
-                self.principal_variation(i == 0, depth - 1, ply + 1, alpha, beta)
+                self.principal_variation(i == 0, depth - 1 + extension, ply + 1, alpha, beta)
             };
             self.board.unmake_move();
             if self.aborted {
@@ -143,19 +163,41 @@ impl Searcher<'_> {
             }
         }
 
-        let bound = match best {
-            s if s <= original_alpha => Bound::Upper,
-            s if s >= beta => Bound::Lower,
-            _ => Bound::Exact,
-        };
-        self.tt.store(Entry {
-            key,
-            best: best_move,
-            score: score_to_tt(best, ply),
-            depth: depth as u8,
-            bound,
-        });
+        if excluded.is_none() {
+            let bound = match best {
+                s if s <= original_alpha => Bound::Upper,
+                s if s >= beta => Bound::Lower,
+                _ => Bound::Exact,
+            };
+            self.tt.store(Entry {
+                key,
+                best: best_move,
+                score: score_to_tt(best, ply),
+                depth: depth as u8,
+                bound,
+            });
+        }
         best
+    }
+
+    /// One more ply for the move from the transposition table `entry` if a reduced search of
+    /// every other move stays clearly below its score.
+    fn singular_extension(&mut self, entry: Entry, depth: u32, ply: i32) -> u32 {
+        let tt_score = score_from_tt(entry.score, ply);
+        if depth < 6
+            || entry.bound == Bound::Upper
+            || u32::from(entry.depth) + 3 < depth
+            || tt_score.abs() >= MATE - MAX_DEPTH as i32
+            || ply as u32 + depth >= MAX_DEPTH
+        {
+            return 0;
+        }
+        let singular_beta = tt_score - 2 * depth as i32;
+        self.excluded[ply as usize] = entry.best;
+        let score = self.negamax((depth - 1) / 2, ply, singular_beta - 1, singular_beta);
+        self.excluded[ply as usize] = None;
+        self.pv_len[ply as usize] = 0;
+        u32::from(score < singular_beta)
     }
 
     /// Score of the move just made, for the side that made it. The first move gets the full

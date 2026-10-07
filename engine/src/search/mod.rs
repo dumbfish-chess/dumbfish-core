@@ -250,6 +250,8 @@ struct Searcher<'a> {
     seldepth: u32,
     /// The move made at each ply of the current line; `None` for a null move.
     played: [Option<Move>; MAX_PLY + 1],
+    /// A move to leave out at each ply, for the singular extension search.
+    excluded: [Option<Move>; MAX_PLY + 1],
     /// The quiet move that last refuted a move, by the piece that made it and its target square.
     countermoves: Box<[[Option<Move>; 64]; 12]>,
 }
@@ -288,6 +290,7 @@ impl<'a> Searcher<'a> {
             pv_len: [0; MAX_PLY + 1],
             seldepth: 0,
             played: [None; MAX_PLY + 1],
+            excluded: [None; MAX_PLY + 1],
             countermoves: Box::new([[None; 64]; 12]),
         }
     }
