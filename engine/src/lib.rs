@@ -4,6 +4,7 @@ pub mod search;
 pub mod see;
 pub mod skill;
 pub mod style;
+pub mod syzygy;
 pub mod time;
 pub mod tt;
 pub mod uci;
