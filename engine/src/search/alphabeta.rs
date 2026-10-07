@@ -134,7 +134,7 @@ impl Searcher<'_> {
                     if let Some(slot) = self.countermove_slot(ply) {
                         self.countermoves[slot.0][slot.1] = Some(mv);
                     }
-                    self.update_history(mv, &quiets_tried, depth);
+                    self.update_history(mv, &quiets_tried, depth, ply);
                 }
                 break;
             }

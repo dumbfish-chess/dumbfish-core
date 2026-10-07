@@ -241,6 +241,8 @@ struct Searcher<'a> {
     /// How often a quiet move, by side, from and to square, caused cutoffs; within
     /// `-MAX_HISTORY..=MAX_HISTORY`.
     history: Box<[[[i32; 64]; 64]; 2]>,
+    /// History of a quiet move after a given previous move, see `continuation_index`.
+    continuation: Vec<i32>,
     /// Triangular table of principal variations: `pv[ply][..pv_len[ply]]` for each ply.
     pv: Box<[[Move; MAX_PLY + 1]; MAX_PLY + 1]>,
     pv_len: [usize; MAX_PLY + 1],
@@ -279,6 +281,7 @@ impl<'a> Searcher<'a> {
             aborted: false,
             killers: [[None; 2]; MAX_PLY],
             history: Box::new([[[0; 64]; 64]; 2]),
+            continuation: vec![0; 12 * 64 * 12 * 64],
             pv: Box::new(
                 [[Move::new(Square::A1, Square::A1, MoveKind::Normal); MAX_PLY + 1]; MAX_PLY + 1],
             ),

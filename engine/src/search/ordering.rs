@@ -6,6 +6,13 @@ pub(super) const MAX_HISTORY: i32 = 16_384;
 
 /// Captures and promotions first, by most valuable victim, then least valuable attacker;
 /// quiet moves keep their generation order.
+/// Index into `continuation` of the quiet move `mv` after the move given by
+/// `Searcher::countermove_slot`: previous piece and square, then this piece and square.
+pub(super) fn continuation_index(board: &Board, (piece, to): (usize, usize), mv: Move) -> usize {
+    let moving = board.piece_on(mv.from()).map_or(0, |p| p.index());
+    ((piece * 64 + to) * 12 + moving) * 64 + mv.to().index()
+}
+
 pub(super) fn order_moves(board: &Board, moves: &mut [Move]) {
     moves.sort_by_key(|&mv| Reverse(move_order_key(board, mv)));
 }
@@ -28,35 +35,47 @@ pub(super) fn move_order_key(board: &Board, mv: Move) -> i32 {
 impl Searcher<'_> {
     /// The move from the transposition table first, then captures and promotions that do not
     /// lose material by `move_order_key`, then the killer moves of this ply and the countermove
-    /// to the last move, then the other quiet moves by history, and the captures that lose
-    /// material last.
+    /// to the last move, then the other quiet moves by history and continuation history, and
+    /// the captures that lose material last.
     pub(super) fn order(&self, moves: &mut [Move], tt_move: Option<Move>, ply: i32) {
         let killers = self.killers[ply as usize];
-        let countermove = self
-            .countermove_slot(ply)
-            .and_then(|(piece, to)| self.countermoves[piece][to]);
+        let previous = self.countermove_slot(ply);
+        let countermove = previous.and_then(|(piece, to)| self.countermoves[piece][to]);
         let history = &self.history[self.board.side_to_move().index()];
         moves.sort_by_key(|&mv| {
             Reverse(match move_order_key(self.board, mv) {
                 _ if Some(mv) == tt_move => i32::MAX,
                 tactical if tactical > 0 && see(self.board, mv) >= 0 => 1_000_000 + tactical,
                 tactical if tactical > 0 => -1_000_000 + tactical,
-                _ if Some(mv) == killers[0] => 2 * MAX_HISTORY + 2,
-                _ if Some(mv) == killers[1] => 2 * MAX_HISTORY + 1,
-                _ if Some(mv) == countermove => 2 * MAX_HISTORY,
-                _ => history[mv.from().index()][mv.to().index()],
+                _ if Some(mv) == killers[0] => 4 * MAX_HISTORY + 2,
+                _ if Some(mv) == killers[1] => 4 * MAX_HISTORY + 1,
+                _ if Some(mv) == countermove => 4 * MAX_HISTORY,
+                _ => {
+                    history[mv.from().index()][mv.to().index()]
+                        + previous.map_or(0, |p| {
+                            self.continuation[continuation_index(self.board, p, mv)]
+                        })
+                }
             })
         });
     }
 
     /// Rewards the quiet move that caused a beta cutoff and penalizes the quiet moves tried
-    /// before it, by `depth²`; values decay towards zero as they approach `MAX_HISTORY`.
-    pub(super) fn update_history(&mut self, cutoff: Move, tried: &[Move], depth: u32) {
+    /// before it, by `depth²`, in the history and in the continuation history of the move that
+    /// led to the node at `ply`; values decay towards zero as they approach `MAX_HISTORY`.
+    pub(super) fn update_history(&mut self, cutoff: Move, tried: &[Move], depth: u32, ply: i32) {
         let bonus = (depth * depth).min(MAX_HISTORY as u32) as i32;
+        let previous = self.countermove_slot(ply);
         let history = &mut self.history[self.board.side_to_move().index()];
+        let continuation = &mut self.continuation;
+        let board = &*self.board;
         let mut update = |mv: Move, bonus: i32| {
             let h = &mut history[mv.from().index()][mv.to().index()];
             *h += bonus - *h * bonus.abs() / MAX_HISTORY;
+            if let Some(p) = previous {
+                let c = &mut continuation[continuation_index(board, p, mv)];
+                *c += bonus - *c * bonus.abs() / MAX_HISTORY;
+            }
         };
         update(cutoff, bonus);
         for &mv in tried {
