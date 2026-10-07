@@ -336,7 +336,18 @@ impl<'a> Searcher<'a> {
             depth += 1;
         }
 
-        if depth >= 3 && !in_check && self.has_pieces() && self.evaluate() >= beta {
+        let pv = beta - alpha > 1;
+        let static_eval = (!in_check && depth > 0).then(|| self.evaluate());
+        if let Some(eval) = static_eval
+            && !pv
+            && depth <= 6
+            && beta.abs() < MATE - MAX_DEPTH as i32
+            && eval - 80 * depth as i32 >= beta
+        {
+            return eval;
+        }
+
+        if depth >= 3 && self.has_pieces() && static_eval.is_some_and(|eval| eval >= beta) {
             self.board.make_null_move();
             let score = -self.negamax(depth - 3, ply + 1, -beta, -beta + 1);
             self.board.unmake_null_move();
