@@ -4,14 +4,15 @@ use std::process::Command;
 use dumbfish::eval::{FEATURE_NAMES, evaluate_with, parse_weights};
 use dumbfish_core::Board;
 
-fn tune(name: &str, dataset: &str, weights: &str, epochs: &str) -> (bool, String, String) {
+fn tune(name: &str, dataset: &str, weights: &str, args: &[&str]) -> (bool, String, String) {
     let dir = format!("{}/{name}", env!("CARGO_TARGET_TMPDIR"));
     fs::create_dir_all(&dir).unwrap();
     let (dataset_path, weights_path) = (format!("{dir}/data.epd"), format!("{dir}/weights.txt"));
     fs::write(&dataset_path, dataset).unwrap();
     fs::write(&weights_path, weights).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_dumbfish-tuner"))
-        .args([&dataset_path, &weights_path, &epochs.to_string()])
+        .args([&dataset_path, &weights_path])
+        .args(args)
         .output()
         .unwrap();
     let stderr = String::from_utf8(output.stderr).unwrap();
@@ -45,7 +46,7 @@ fn learns_relative_piece_values() {
         "relative",
         &dataset,
         include_str!("../../engine/weights.txt"),
-        "500",
+        &["500"],
     );
     assert!(ok, "{log}");
 
@@ -63,7 +64,7 @@ fn learns_relative_piece_values() {
 #[test]
 fn rejects_bad_input() {
     let weights = include_str!("../../engine/weights.txt");
-    let (ok, after, log) = tune("bad", "4k3/8/8/8/8/8/P7/4K3 w - - c9;\n", weights, "10");
+    let (ok, after, log) = tune("bad", "4k3/8/8/8/8/8/P7/4K3 w - - c9;\n", weights, &["10"]);
     assert!(!ok);
     assert!(log.contains("line 1: no result"), "{log}");
     assert_eq!(after, weights, "weights untouched on error");
@@ -78,13 +79,32 @@ fn rare_features_keep_their_weights() {
     }
     dataset += "4k3/8/8/8/8/8/8/R3K3 w - - c9 \"0-1\";\n";
     let initial = include_str!("../../engine/weights.txt");
-    let (ok, weights, log) = tune("rare", &dataset, initial, "50");
+    let (ok, weights, log) = tune("rare", &dataset, initial, &["50"]);
     assert!(ok, "{log}");
-    assert!(log.contains("kept: too little data"), "{log}");
+    assert!(
+        log.contains("kept: frozen groups or too little data"),
+        "{log}"
+    );
     let rook = index("rook");
     assert_eq!(
         parse_weights(&weights).unwrap()[rook],
         parse_weights(initial).unwrap()[rook],
         "one lost game with an extra rook is not evidence"
     );
+}
+
+#[test]
+fn frozen_groups_keep_their_weights() {
+    let dataset =
+        "4k3/8/8/8/8/8/P7/4K3 w - - c9 \"1-0\";\n4k3/8/8/8/8/8/8/N3K3 w - - c9 \"1/2-1/2\";\n";
+    let initial = include_str!("../../engine/weights.txt");
+    let all = "--freeze=material,positional,pawns,mobility,king_attack,king_defense";
+    let (ok, weights, log) = tune("frozen", dataset, initial, &["100", all]);
+    assert!(ok, "{log}");
+    assert_eq!(weights, initial, "every group frozen");
+
+    let (ok, after, log) = tune("unknown", dataset, initial, &["--freeze=tempo"]);
+    assert!(!ok);
+    assert!(log.contains("unknown group \"tempo\""), "{log}");
+    assert_eq!(after, initial);
 }

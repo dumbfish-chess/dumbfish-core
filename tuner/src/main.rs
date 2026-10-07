@@ -1,14 +1,20 @@
 use std::process::ExitCode;
 use std::{env, fs};
 
-use dumbfish::eval::{MAX_PHASE, blend, for_each_feature, format_weights, parse_weights, phase};
+use dumbfish::eval::{
+    MAX_PHASE, blend, for_each_feature, format_weights, group, parse_weights, phase,
+};
+use dumbfish::style::GROUPS;
 use dumbfish_core::Board;
 
-const USAGE: &str = "usage: dumbfish-tuner <dataset.epd> <weights.txt> [epochs]
+const USAGE: &str =
+    "usage: dumbfish-tuner <dataset.epd> <weights.txt> [epochs] [--freeze=<group>,...]
 
 Texel tuning: fits the evaluation weights to game results by minimizing the mean squared error
 between each result and sigmoid(K * eval), then rewrites <weights.txt> in place. Weights whose
-feature is active in less than 0.01% of the positions keep their initial value.
+feature is active in less than 0.01% of the positions keep their initial value, as do the
+weights of the groups given to --freeze: material, positional, pawns, mobility, king_attack,
+king_defense.
 A dataset line starts with a FEN (move counters optional) and contains the result as
 \"1-0\", \"0-1\" or \"1/2-1/2\", as in quiet-labeled.epd.";
 
@@ -20,15 +26,7 @@ const DEFAULT_EPOCHS: usize = 2000;
 const MIN_ACTIVITY: f64 = 1e-4;
 
 fn main() -> ExitCode {
-    let args: Vec<String> = env::args().skip(1).collect();
-    let result = match &args[..] {
-        [dataset, weights] => run(dataset, weights, DEFAULT_EPOCHS),
-        [dataset, weights, epochs] => match epochs.parse() {
-            Ok(epochs) => run(dataset, weights, epochs),
-            Err(_) => Err(USAGE.to_string()),
-        },
-        _ => Err(USAGE.to_string()),
-    };
+    let result = parse_args(env::args().skip(1)).and_then(|args| run(&args));
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -38,7 +36,51 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(dataset_path: &str, weights_path: &str, epochs: usize) -> Result<(), String> {
+struct Args {
+    dataset: String,
+    weights: String,
+    epochs: usize,
+    /// Indices into `GROUPS`.
+    frozen_groups: Vec<usize>,
+}
+
+fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
+    let mut positional = Vec::new();
+    let mut frozen_groups = Vec::new();
+    for arg in args {
+        let Some(list) = arg.strip_prefix("--freeze=") else {
+            positional.push(arg);
+            continue;
+        };
+        for name in list.split(',') {
+            let index = GROUPS.iter().position(|g| *g == name).ok_or_else(|| {
+                format!(
+                    "unknown group {name:?}, expected one of {}",
+                    GROUPS.join(", ")
+                )
+            })?;
+            frozen_groups.push(index);
+        }
+    }
+    let (dataset, weights, epochs) = match &positional[..] {
+        [dataset, weights] => (dataset, weights, DEFAULT_EPOCHS),
+        [dataset, weights, epochs] => (
+            dataset,
+            weights,
+            epochs.parse().map_err(|_| USAGE.to_string())?,
+        ),
+        _ => return Err(USAGE.to_string()),
+    };
+    Ok(Args {
+        dataset: dataset.clone(),
+        weights: weights.clone(),
+        epochs,
+        frozen_groups,
+    })
+}
+
+fn run(args: &Args) -> Result<(), String> {
+    let (dataset_path, weights_path, epochs) = (&args.dataset, &args.weights, args.epochs);
     let read = |path: &str| fs::read_to_string(path).map_err(|e| format!("{path}: {e}"));
     let mut weights: Vec<[f64; 3]> = parse_weights(&read(weights_path)?)?
         .iter()
@@ -52,11 +94,15 @@ fn run(dataset_path: &str, weights_path: &str, epochs: usize) -> Result<(), Stri
     let fitted = data
         .activity(weights.len())
         .iter()
-        .map(|a| a.map(|x| x >= MIN_ACTIVITY * data.len() as f64))
+        .enumerate()
+        .map(|(f, a)| {
+            let frozen = args.frozen_groups.contains(&group(f));
+            a.map(|x| !frozen && x >= MIN_ACTIVITY * data.len() as f64)
+        })
         .collect::<Vec<_>>();
-    let frozen = fitted.iter().flatten().filter(|&&fit| !fit).count();
+    let kept = fitted.iter().flatten().filter(|&&fit| !fit).count();
     eprintln!(
-        "{frozen} of {} weights kept: too little data",
+        "{kept} of {} weights kept: frozen groups or too little data",
         3 * weights.len()
     );
     tune(&data, &mut weights, &fitted, k, epochs);
