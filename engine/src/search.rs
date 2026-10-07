@@ -32,11 +32,16 @@ pub struct Limits {
     pub style: Style,
     /// Search threads sharing the transposition table (Lazy SMP); 0 counts as 1.
     pub threads: usize,
+    /// Best root moves to report per iteration, each with its own score and line; 0 counts as 1.
+    /// Ignored below full skill.
+    pub multipv: usize,
 }
 
 /// A finished iteration of iterative deepening.
 pub struct Iteration {
     pub depth: u32,
+    /// Rank of this line among the best root moves, from 1; see `Limits::multipv`.
+    pub multipv: usize,
     pub score: i32,
     pub best: Move,
     /// The principal variation, starting with `best`.
@@ -121,6 +126,7 @@ fn main_search(
     let mut moves = searcher.board.legal_moves();
     order_moves(searcher.board, &mut moves);
     let mut best = moves.first().copied();
+    let lines = searcher.limits.multipv.clamp(1, moves.len().max(1));
     let mut scores: Vec<(Move, i32)> = Vec::new();
     for depth in 1..=max_depth {
         if depth > 1
@@ -131,32 +137,58 @@ fn main_search(
         {
             break;
         }
-        let previous = scores.iter().map(|&(_, score)| score).max();
-        let found = match skill {
-            Some(_) => searcher.root_scores(depth, &moves),
-            None => searcher
-                .aspiration(depth, &moves, previous)
-                .map(|best| vec![best]),
-        };
-        let Some(found) = found else {
+        let mut found = Vec::new();
+        if skill.is_some() {
+            let Some(all) = searcher.root_scores(depth, &moves) else {
+                break;
+            };
+            let (mv, score) = all
+                .iter()
+                .copied()
+                .reduce(|a, b| if b.1 > a.1 { b } else { a })
+                .expect("a finished iteration has moves");
+            found.push((mv, score, vec![mv]));
+            scores = all;
+        } else {
+            for line in 0..lines {
+                let mut remaining = MoveList::default();
+                for &mv in moves.iter() {
+                    if !found.iter().any(|&(f, _, _)| f == mv) {
+                        remaining.push(mv);
+                    }
+                }
+                let previous = scores.get(line).map(|&(_, score)| score);
+                let Some((mv, score)) = searcher.aspiration(depth, &remaining, previous) else {
+                    break;
+                };
+                found.push((mv, score, searcher.root_pv(mv)));
+            }
+            if found.len() == lines {
+                scores = found.iter().map(|&(mv, score, _)| (mv, score)).collect();
+            }
+        }
+        let Some(&(mv, _, _)) = found.first() else {
             break;
         };
-        let (mv, score) = found
-            .iter()
-            .copied()
-            .reduce(|a, b| if b.1 > a.1 { b } else { a })
-            .expect("a finished iteration has moves");
         best = Some(mv);
-        scores = found;
-        put_first(&mut moves, mv);
-        on_iteration(&Iteration {
-            depth,
-            score,
-            best: mv,
-            pv: searcher.root_pv(mv),
-            nodes: searcher.total_nodes.load(Ordering::Relaxed) + searcher.nodes - searcher.flushed,
-            elapsed: start.elapsed(),
-        });
+        for &(mv, _, _) in found.iter().rev() {
+            put_first(&mut moves, mv);
+        }
+        for (line, (mv, score, pv)) in found.into_iter().enumerate() {
+            on_iteration(&Iteration {
+                depth,
+                multipv: line + 1,
+                score,
+                best: mv,
+                pv,
+                nodes: searcher.total_nodes.load(Ordering::Relaxed) + searcher.nodes
+                    - searcher.flushed,
+                elapsed: start.elapsed(),
+            });
+        }
+        if searcher.aborted {
+            break;
+        }
     }
     searcher.flush_nodes();
     if let Some(skill) = skill {

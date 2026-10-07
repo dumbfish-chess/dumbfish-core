@@ -14,6 +14,7 @@ use crate::time;
 use crate::tt::{self, TranspositionTable};
 
 const MAX_THREADS: usize = 256;
+const MAX_MULTIPV: usize = 256;
 
 /// Reads UCI commands from stdin until `quit` or end of input.
 pub fn run() {
@@ -23,6 +24,7 @@ pub fn run() {
         skill_level: skill::MAX_LEVEL,
         style: PRESETS[0].style,
         threads: 1,
+        multipv: 1,
         stop: Arc::new(AtomicBool::new(false)),
         worker: None,
     };
@@ -40,6 +42,7 @@ pub fn run() {
                     tt::MAX_MEGABYTES
                 );
                 println!("option name Threads type spin default 1 min 1 max {MAX_THREADS}");
+                println!("option name MultiPV type spin default 1 min 1 max {MAX_MULTIPV}");
                 println!(
                     "option name Skill Level type spin default {0} min 0 max {0}",
                     skill::MAX_LEVEL
@@ -109,6 +112,7 @@ struct Engine {
     /// Set by `Style`; the group options and `Contempt` then override single values.
     style: Style,
     threads: usize,
+    multipv: usize,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<TranspositionTable>>,
 }
@@ -182,6 +186,10 @@ impl Engine {
                 self.threads = parse_in(&value, 1, MAX_THREADS as i32)? as usize;
                 Ok(())
             }
+            ("multipv", _) => {
+                self.multipv = parse_in(&value, 1, MAX_MULTIPV as i32)? as usize;
+                Ok(())
+            }
             ("contempt", _) => {
                 self.style.contempt = parse_in(&value, -style::MAX_CONTEMPT, style::MAX_CONTEMPT)?;
                 Ok(())
@@ -202,6 +210,7 @@ impl Engine {
         });
         limits.style = self.style;
         limits.threads = self.threads;
+        limits.multipv = self.multipv;
         self.stop.store(false, Ordering::Relaxed);
         let stop = Arc::clone(&self.stop);
         let mut board = self.board.clone();
@@ -309,8 +318,9 @@ fn print_info(it: &Iteration) {
     };
     let pv: Vec<_> = it.pv.iter().map(|m| m.to_string()).collect();
     println!(
-        "info depth {} score {score} nodes {} nps {nps} time {} pv {}",
+        "info depth {} multipv {} score {score} nodes {} nps {nps} time {} pv {}",
         it.depth,
+        it.multipv,
         it.nodes,
         it.elapsed.as_millis(),
         pv.join(" ")

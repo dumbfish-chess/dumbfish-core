@@ -443,3 +443,43 @@ fn threads_option() {
         "{best}"
     );
 }
+
+#[test]
+fn multipv_option() {
+    let mut engine = Engine::start();
+    engine.send("uci");
+    let lines = engine.read_until("uciok");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l == "option name MultiPV type spin default 1 min 1 max 256"),
+        "{lines:?}"
+    );
+    engine.send("setoption name MultiPV value 0");
+    engine.send("setoption name MultiPV value 2");
+    engine.send("isready");
+    let lines = engine.read_until("readyok");
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|l| l.starts_with("info string"))
+            .count(),
+        1,
+        "{lines:?}"
+    );
+    engine.send("position startpos");
+    engine.send("go depth 4");
+    let lines = engine.read_until("bestmove");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("info depth 4 multipv 1 ")),
+        "{lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("info depth 4 multipv 2 ")),
+        "{lines:?}"
+    );
+}
