@@ -8,7 +8,8 @@ GUI живёт в другом репозитории и общается с д�
 - `core/` (`dumbfish-core`) — битборды, таблицы атак, Board, FEN, Zobrist, генерация ходов, perft.
 - `engine/` (`dumbfish`) — библиотека (поиск, оценка, UCI, bench) и бинарник. Без аргументов говорит по UCI
   на stdin/stdout; `dumbfish bench [depth]` печатает `N nodes M nps` (`N` — сигнатура, одинаковая на любой машине).
-  Веса оценки — `engine/weights.txt`. UCI-опции: `Hash` (МБ, по умолчанию 16), `Threads` (Lazy SMP: потоки с общей хэш-таблицей, по умолчанию 1;
+  Веса оценки — `engine/weights.txt`. UCI-опции: `Hash` (МБ, по умолчанию 16), `MultiPV`, `Ponder` (`go ponder`/`ponderhit`), `UCI_ShowWDL`
+  (модель из `engine/wdl.txt`), `Threads` (Lazy SMP: потоки с общей хэш-таблицей, по умолчанию 1;
   bench и SPRT однопоточные), `Skill Level` (0–20, 20 — полная
   сила: ниже — бюджет узлов `256 << (level / 2)` и шум до `15 * (20 - level)` cp при выборе хода из корня).
   Стиль: `Style` (пресет из `engine/styles.txt`: balanced, aggressive, defensive, positional, materialistic)
@@ -28,6 +29,7 @@ GUI живёт в другом репозитории и общается с д�
 - `tools/` (`dumbfish-tools`) — вспомогательные утилиты:
   - `magics` — генерация magic-чисел для `core/src/attacks.rs`;
   - `perft <depth> [fen]` — perft с разбивкой по ходам из корня (для поиска расхождений с эталонным движком).
+  - `wdl <dataset.epd>` — подбор модели выигрыш/ничья/проигрыш для `engine/wdl.txt` по результатам партий.
 - `justfile`: `just uci [ref]` собирает движок из ветки или коммита (по умолчанию — последней изменённой ветки,
   `.` — рабочее дерево) и запускает UCI в терминале; `just build [ref]` кладёт бинарник в `target/play/dumbfish` для GUI.
 - `scripts/sprt.sh <base-ref> [<dev-ref>]` — SPRT `<dev-ref>` (по умолчанию рабочего дерева) против `<base-ref>`

@@ -17,6 +17,7 @@ version = "0.1.0"
 name = "dumbfish-tools"
 version = "0.1.0"
 dependencies = [
+ "dumbfish",
  "dumbfish-core",
 ]
 
