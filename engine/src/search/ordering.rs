@@ -4,6 +4,11 @@ use super::*;
 
 pub(super) const MAX_HISTORY: i32 = 16_384;
 
+/// The history reward for a cutoff at `depth`, and the penalty for the moves tried before it.
+fn history_bonus(depth: u32) -> i32 {
+    (16 * depth * depth).min(1536) as i32
+}
+
 /// Index into `continuation` of the quiet move `mv` after the move given by
 /// `Searcher::countermove_slot`: previous piece and square, then this piece and square.
 pub(super) fn continuation_index(board: &Board, (piece, to): (usize, usize), mv: Move) -> usize {
@@ -86,10 +91,11 @@ impl Searcher<'_> {
     }
 
     /// Rewards the quiet move that caused a beta cutoff and penalizes the quiet moves tried
-    /// before it, by `depth²`, in the history and in the continuation history of the move that
-    /// led to the node at `ply`; values decay towards zero as they approach `MAX_HISTORY`.
+    /// before it, by `history_bonus`, in the history and in the continuation history of the
+    /// move that led to the node at `ply`; values decay towards zero as they approach
+    /// `MAX_HISTORY`.
     pub(super) fn update_history(&mut self, cutoff: Move, tried: &[Move], depth: u32, ply: i32) {
-        let bonus = (depth * depth).min(MAX_HISTORY as u32) as i32;
+        let bonus = history_bonus(depth);
         let previous = self.countermove_slot(ply);
         let history = &mut self.history[self.board.side_to_move().index()];
         let continuation = &mut self.continuation;
@@ -109,14 +115,14 @@ impl Searcher<'_> {
     }
 
     /// Rewards `cutoff`, if it is a capture, and penalizes the captures tried before it, by
-    /// `depth²` with the same decay as `update_history`.
+    /// `history_bonus` with the same decay as `update_history`.
     pub(super) fn update_capture_history(
         &mut self,
         cutoff: Option<Move>,
         tried: &[Move],
         depth: u32,
     ) {
-        let bonus = (depth * depth).min(MAX_HISTORY as u32) as i32;
+        let bonus = history_bonus(depth);
         let board = &*self.board;
         let table = &mut self.capture_history;
         let mut update = |mv: Move, bonus: i32| {
