@@ -6,7 +6,7 @@ use dumbfish_core::Board;
 use crate::search::{self, Limits};
 use crate::tt::{self, TranspositionTable};
 
-pub const DEFAULT_DEPTH: u32 = 5;
+pub const DEFAULT_DEPTH: u32 = 10;
 
 /// One FEN per line; changing it or `DEFAULT_DEPTH` changes the bench signature.
 const POSITIONS: &str = include_str!("../bench.epd");
