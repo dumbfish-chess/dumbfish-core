@@ -340,7 +340,7 @@ mod alphabeta;
 mod ordering;
 mod root;
 
-use ordering::{move_order_key, order_moves};
+use ordering::{MAX_HISTORY, move_order_key, order_moves};
 
 impl<'a> Searcher<'a> {
     fn new(

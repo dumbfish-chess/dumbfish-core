@@ -42,7 +42,6 @@ impl Searcher<'_> {
         let killers = self.killers[ply as usize];
         let previous = self.countermove_slot(ply);
         let countermove = previous.and_then(|(piece, to)| self.countermoves[piece][to]);
-        let history = &self.history[self.board.side_to_move().index()];
         moves.sort_by_key(|&mv| {
             Reverse(match move_order_key(self.board, mv) {
                 _ if Some(mv) == tt_move => i32::MAX,
@@ -51,14 +50,19 @@ impl Searcher<'_> {
                 _ if Some(mv) == killers[0] => 4 * MAX_HISTORY + 2,
                 _ if Some(mv) == killers[1] => 4 * MAX_HISTORY + 1,
                 _ if Some(mv) == countermove => 4 * MAX_HISTORY,
-                _ => {
-                    history[mv.from().index()][mv.to().index()]
-                        + previous.map_or(0, |p| {
-                            self.continuation[continuation_index(self.board, p, mv)]
-                        })
-                }
+                _ => self.quiet_history(mv, ply),
             })
         });
+    }
+
+    /// History plus continuation history of the quiet move `mv` at `ply`, within
+    /// `-2 * MAX_HISTORY..=2 * MAX_HISTORY`.
+    pub(super) fn quiet_history(&self, mv: Move, ply: i32) -> i32 {
+        let history = &self.history[self.board.side_to_move().index()];
+        history[mv.from().index()][mv.to().index()]
+            + self.countermove_slot(ply).map_or(0, |p| {
+                self.continuation[continuation_index(self.board, p, mv)]
+            })
     }
 
     /// Rewards the quiet move that caused a beta cutoff and penalizes the quiet moves tried

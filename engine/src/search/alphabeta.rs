@@ -150,6 +150,11 @@ impl Searcher<'_> {
                 return 0;
             }
             let quiet = move_order_key(self.board, mv) == 0;
+            let history = if quiet {
+                self.quiet_history(mv, ply)
+            } else {
+                0
+            };
             self.played[ply as usize] = Some(mv);
             self.board.make_move(mv);
             let gives_check = self.board.in_check();
@@ -166,8 +171,10 @@ impl Searcher<'_> {
             }
             let late = i >= 3 && depth >= 3 && quiet && !in_check && !gives_check;
             let score = if late {
-                let reduction = reduction(depth, i + 1) + u32::from(!improving);
-                let reduced = (depth - 1).saturating_sub(reduction);
+                let reduction =
+                    reduction(depth, i + 1) as i32 + i32::from(!improving) + i32::from(!pv)
+                        - history / MAX_HISTORY;
+                let reduced = (depth - 1).saturating_sub(reduction.max(0) as u32);
                 let score = -self.negamax(reduced, ply + 1, -alpha - 1, -alpha);
                 if score > alpha && !self.aborted {
                     self.principal_variation(false, depth - 1, ply + 1, alpha, beta)
