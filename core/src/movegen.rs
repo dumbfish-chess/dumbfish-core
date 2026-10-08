@@ -1,6 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
-use crate::board::{BLACK_KINGSIDE, BLACK_QUEENSIDE, WHITE_KINGSIDE, WHITE_QUEENSIDE};
+use crate::board::castling_right;
 use crate::{Bitboard, Board, Color, Move, MoveKind, PieceKind, Square, attacks};
 
 /// Fixed-capacity move list of up to 256 moves; no legal position has more than 218.
@@ -180,24 +180,21 @@ impl Board {
         }
 
         if checkers.is_empty() && !captures_only {
-            let (rank, kingside, queenside) = match us {
-                Color::White => (0, WHITE_KINGSIDE, WHITE_QUEENSIDE),
-                Color::Black => (7, BLACK_KINGSIDE, BLACK_QUEENSIDE),
-            };
-            let sq = |file| Square::new(file, rank);
-            if self.castling() & kingside != 0
-                && (occupied & (sq(5).bb() | sq(6).bb())).is_empty()
-                && !attacked(sq(5), occupied)
-                && !attacked(sq(6), occupied)
-            {
-                list.push(Move::new(king, sq(6), MoveKind::Castle));
-            }
-            if self.castling() & queenside != 0
-                && (occupied & (sq(1).bb() | sq(2).bb() | sq(3).bb())).is_empty()
-                && !attacked(sq(3), occupied)
-                && !attacked(sq(2), occupied)
-            {
-                list.push(Move::new(king, sq(2), MoveKind::Castle));
+            for kingside in [true, false] {
+                if self.castling() & castling_right(us, kingside) == 0 {
+                    continue;
+                }
+                let king_to = Square::new(if kingside { 6 } else { 2 }, king.rank());
+                let mv = Move::new(king, king_to, MoveKind::Castle);
+                let (rook, rook_to) = self.castling_rook(mv);
+                let king_path = attacks::between(king, king_to) | king_to.bb();
+                let path = king_path | attacks::between(rook, rook_to) | rook_to.bb();
+                let without_rook = occupied ^ rook.bb();
+                if (path & without_rook & !king.bb()).is_empty()
+                    && !king_path.into_iter().any(|sq| attacked(sq, without_rook))
+                {
+                    list.push(mv);
+                }
             }
         }
         list

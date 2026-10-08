@@ -9,17 +9,15 @@ pub const WHITE_QUEENSIDE: u8 = 2;
 pub const BLACK_KINGSIDE: u8 = 4;
 pub const BLACK_QUEENSIDE: u8 = 8;
 
-/// Castling rights that survive a move from or to the square.
-static CASTLING_MASK: [u8; 64] = {
-    let mut mask = [!0; 64];
-    mask[Square::A1 as usize] = !WHITE_QUEENSIDE;
-    mask[Square::H1 as usize] = !WHITE_KINGSIDE;
-    mask[Square::E1 as usize] = !(WHITE_KINGSIDE | WHITE_QUEENSIDE);
-    mask[Square::A8 as usize] = !BLACK_QUEENSIDE;
-    mask[Square::H8 as usize] = !BLACK_KINGSIDE;
-    mask[Square::E8 as usize] = !(BLACK_KINGSIDE | BLACK_QUEENSIDE);
-    mask
-};
+/// The castling right of `color` on the king's side or the queen's side.
+pub const fn castling_right(color: Color, kingside: bool) -> u8 {
+    match (color, kingside) {
+        (Color::White, true) => WHITE_KINGSIDE,
+        (Color::White, false) => WHITE_QUEENSIDE,
+        (Color::Black, true) => BLACK_KINGSIDE,
+        (Color::Black, false) => BLACK_QUEENSIDE,
+    }
+}
 
 /// State that `make_move` destroys and `unmake_move` restores.
 #[derive(Clone, Copy, Debug)]
@@ -39,6 +37,11 @@ pub struct Board {
     mailbox: [Option<Piece>; 64],
     side: Color,
     castling: u8,
+    /// Starting square of the rook of each castling right, indexed by the right's bit; any
+    /// file in Chess960.
+    castling_rooks: [Square; 4],
+    /// Castling rights that survive a move from or to each square.
+    castling_mask: [u8; 64],
     /// Set only when a pawn of the side to move attacks it, so the hash
     /// does not depend on en passant squares that cannot be used.
     en_passant: Option<Square>,
@@ -127,6 +130,19 @@ impl Board {
             | (attacks::rook(sq, occupied) & straight)
     }
 
+    /// The start and end squares of the rook in the castling move `mv`.
+    pub fn castling_rook(&self, mv: Move) -> (Square, Square) {
+        let (rank, kingside) = (mv.from().rank(), mv.to().file() == 6);
+        let color = if rank == 0 {
+            Color::White
+        } else {
+            Color::Black
+        };
+        let right = castling_right(color, kingside);
+        let to = Square::new(if kingside { 5 } else { 3 }, rank);
+        (self.castling_rooks[right.trailing_zeros() as usize], to)
+    }
+
     /// Plays a move that must be at least pseudo-legal in this position.
     pub fn make_move(&mut self, mv: Move) {
         let (from, to, kind) = (mv.from(), mv.to(), mv.kind());
@@ -135,7 +151,10 @@ impl Board {
             MoveKind::EnPassant => Square::new(to.file(), from.rank()),
             _ => to,
         };
-        let captured = self.mailbox[captured_sq.index()];
+        let captured = match kind {
+            MoveKind::Castle => None,
+            _ => self.mailbox[captured_sq.index()],
+        };
         self.history.push(Undo {
             mv,
             captured,
@@ -149,36 +168,36 @@ impl Board {
             self.hash ^= zobrist::en_passant(ep);
         }
         self.halfmove += 1;
-        if captured.is_some() {
-            self.remove(captured_sq);
-            self.halfmove = 0;
-        }
-        let piece = self.remove(from);
-        if piece.kind == PieceKind::Pawn {
-            self.halfmove = 0;
-        }
-
-        match kind {
-            MoveKind::Promotion(promoted) => self.put(Piece::new(us, promoted), to),
-            _ => self.put(piece, to),
-        }
-        match kind {
-            MoveKind::DoublePush => {
+        if kind == MoveKind::Castle {
+            let (rook_from, rook_to) = self.castling_rook(mv);
+            let king = self.remove(from);
+            let rook = self.remove(rook_from);
+            self.put(king, to);
+            self.put(rook, rook_to);
+        } else {
+            if captured.is_some() {
+                self.remove(captured_sq);
+                self.halfmove = 0;
+            }
+            let piece = self.remove(from);
+            if piece.kind == PieceKind::Pawn {
+                self.halfmove = 0;
+            }
+            match kind {
+                MoveKind::Promotion(promoted) => self.put(Piece::new(us, promoted), to),
+                _ => self.put(piece, to),
+            }
+            if kind == MoveKind::DoublePush {
                 let ep = Square::new(from.file(), (from.rank() + to.rank()) / 2);
                 if !(attacks::pawn(us, ep) & self.pieces(!us, PieceKind::Pawn)).is_empty() {
                     self.en_passant = Some(ep);
                     self.hash ^= zobrist::en_passant(ep);
                 }
             }
-            MoveKind::Castle => {
-                let (rook_from, rook_to) = castling_rook(to);
-                let rook = self.remove(rook_from);
-                self.put(rook, rook_to);
-            }
-            _ => {}
         }
 
-        let castling = self.castling & CASTLING_MASK[from.index()] & CASTLING_MASK[to.index()];
+        let castling =
+            self.castling & self.castling_mask[from.index()] & self.castling_mask[to.index()];
         self.hash ^= zobrist::castling(self.castling) ^ zobrist::castling(castling);
         self.castling = castling;
 
@@ -227,15 +246,18 @@ impl Board {
             self.fullmove -= 1;
         }
 
-        let piece = self.remove(to);
-        match kind {
-            MoveKind::Promotion(_) => self.put(Piece::new(us, PieceKind::Pawn), from),
-            _ => self.put(piece, from),
-        }
         if kind == MoveKind::Castle {
-            let (rook_from, rook_to) = castling_rook(to);
+            let (rook_from, rook_to) = self.castling_rook(undo.mv);
+            let king = self.remove(to);
             let rook = self.remove(rook_to);
+            self.put(king, from);
             self.put(rook, rook_from);
+        } else {
+            let piece = self.remove(to);
+            match kind {
+                MoveKind::Promotion(_) => self.put(Piece::new(us, PieceKind::Pawn), from),
+                _ => self.put(piece, from),
+            }
         }
         if let Some(captured) = undo.captured {
             let captured_sq = match kind {
@@ -258,6 +280,8 @@ impl Board {
             mailbox: [None; 64],
             side: Color::White,
             castling: 0,
+            castling_rooks: [Square::H1, Square::A1, Square::H8, Square::A8],
+            castling_mask: [!0; 64],
             en_passant: None,
             halfmove: 0,
             fullmove: 1,
@@ -304,13 +328,7 @@ impl Board {
             Some("-") => {}
             Some(rights) => {
                 for c in rights.chars() {
-                    board.castling |= match c {
-                        'K' => WHITE_KINGSIDE,
-                        'Q' => WHITE_QUEENSIDE,
-                        'k' => BLACK_KINGSIDE,
-                        'q' => BLACK_QUEENSIDE,
-                        _ => return Err(format!("invalid castling rights: {rights:?}")),
-                    };
+                    board.add_castling_right(c)?;
                 }
             }
             None => return Err("missing castling rights".into()),
@@ -343,6 +361,41 @@ impl Board {
         Ok(board)
     }
 
+    /// Adds the castling right written as `c`: `K`/`Q` for the outermost rook on the king's or
+    /// the queen's side of the king, or the rook's file (`A`..`H`, Shredder-FEN and X-FEN for
+    /// Chess960); lowercase for black.
+    fn add_castling_right(&mut self, c: char) -> Result<(), String> {
+        use PieceKind::*;
+        let color = if c.is_ascii_uppercase() {
+            Color::White
+        } else {
+            Color::Black
+        };
+        let rank = if color == Color::White { 0 } else { 7 };
+        let kings = self.pieces(color, King);
+        if kings.count() != 1 || kings.lsb().rank() != rank {
+            return Err(format!(
+                "castling right {c:?} without a king on its first rank"
+            ));
+        }
+        let king = kings.lsb();
+        let rooks = self.pieces(color, Rook) & Bitboard::rank(rank);
+        let rook = match c.to_ascii_uppercase() {
+            'K' => rooks.into_iter().filter(|r| r.file() > king.file()).last(),
+            'Q' => rooks.into_iter().find(|r| r.file() < king.file()),
+            file @ 'A'..='H' => Some(Square::new(file as u8 - b'A', rank))
+                .filter(|&r| rooks.contains(r) && r.file() != king.file()),
+            _ => return Err(format!("invalid castling right {c:?}")),
+        };
+        let rook = rook.ok_or_else(|| format!("castling right {c:?} without its rook"))?;
+        let right = castling_right(color, rook.file() > king.file());
+        self.castling |= right;
+        self.castling_rooks[right.trailing_zeros() as usize] = rook;
+        self.castling_mask[rook.index()] &= !right;
+        self.castling_mask[king.index()] &= !right;
+        Ok(())
+    }
+
     /// Rejects positions the move generator cannot handle.
     fn validate(&self) -> Result<(), String> {
         use PieceKind::*;
@@ -353,21 +406,6 @@ impl Board {
         }
         if !(self.kind_bb(Pawn) & (Bitboard::rank(0) | Bitboard::rank(7))).is_empty() {
             return Err("pawn on the first or last rank".into());
-        }
-
-        let rights = [
-            (WHITE_KINGSIDE, Color::White, Square::E1, Square::H1),
-            (WHITE_QUEENSIDE, Color::White, Square::E1, Square::A1),
-            (BLACK_KINGSIDE, Color::Black, Square::E8, Square::H8),
-            (BLACK_QUEENSIDE, Color::Black, Square::E8, Square::A8),
-        ];
-        for (right, color, king, rook) in rights {
-            if self.castling & right != 0
-                && (self.piece_on(king) != Some(Piece::new(color, King))
-                    || self.piece_on(rook) != Some(Piece::new(color, Rook)))
-            {
-                return Err("castling rights without king and rook on their squares".into());
-            }
         }
 
         if let Some(ep) = self.en_passant {
@@ -426,15 +464,31 @@ impl Board {
         if self.castling == 0 {
             fen.push('-');
         }
-        for (right, c) in [
-            (WHITE_KINGSIDE, 'K'),
-            (WHITE_QUEENSIDE, 'Q'),
-            (BLACK_KINGSIDE, 'k'),
-            (BLACK_QUEENSIDE, 'q'),
+        for (color, kingside) in [
+            (Color::White, true),
+            (Color::White, false),
+            (Color::Black, true),
+            (Color::Black, false),
         ] {
-            if self.castling & right != 0 {
-                fen.push(c);
+            let right = castling_right(color, kingside);
+            if self.castling & right == 0 {
+                continue;
             }
+            let rook = self.castling_rooks[right.trailing_zeros() as usize];
+            let rooks = self.pieces(color, PieceKind::Rook) & Bitboard::rank(rook.rank());
+            let outermost = !rooks.into_iter().any(|r| match kingside {
+                true => r.file() > rook.file(),
+                false => r.file() < rook.file(),
+            });
+            let c = match (outermost, kingside) {
+                (true, true) => 'K',
+                (true, false) => 'Q',
+                (false, _) => (b'A' + rook.file()) as char,
+            };
+            fen.push(match color {
+                Color::White => c,
+                Color::Black => c.to_ascii_lowercase(),
+            });
         }
         match self.en_passant {
             Some(ep) => write!(fen, " {ep}").unwrap(),
@@ -472,15 +526,5 @@ impl Board {
         self.colors[piece.color.index()] ^= sq.bb();
         self.hash ^= zobrist::piece(piece, sq);
         piece
-    }
-}
-
-/// Rook (from, to) for a castling move landing the king on `king_to`.
-fn castling_rook(king_to: Square) -> (Square, Square) {
-    let rank = king_to.rank();
-    if king_to.file() == 6 {
-        (Square::new(7, rank), Square::new(5, rank))
-    } else {
-        (Square::new(0, rank), Square::new(3, rank))
     }
 }

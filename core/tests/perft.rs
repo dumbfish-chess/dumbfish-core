@@ -1,4 +1,5 @@
-//! Standard perft set from https://www.chessprogramming.org/Perft_Results.
+//! Standard perft set from https://www.chessprogramming.org/Perft_Results, and Chess960
+//! positions checked against Stockfish 19 (`UCI_Chess960`, `go perft`).
 //!
 //! `cargo test` runs the shallow depths; the full set needs a release build:
 //! `cargo test --release -p dumbfish-core --test perft -- --include-ignored`
@@ -38,14 +39,61 @@ const SUITE: [(&str, &[u64]); 7] = [
     ),
 ];
 
+/// Chess960 positions in Shredder-FEN: the first eight from the Chess960 perft list of the
+/// Chess Programming Wiki, then a king that castles without moving and a castling rook that
+/// shields the king's target square.
+const CHESS960: [(&str, &[u64]); 10] = [
+    (
+        "bqnb1rkr/pp3ppp/3ppn2/2p5/5P2/P2P4/NPP1P1PP/BQ1BNRKR w HFhf - 2 9",
+        &[21, 528, 12_189, 326_672, 8_146_062],
+    ),
+    (
+        "2nnrbkr/p1qppppp/8/1ppb4/6PP/3PP3/PPP2P2/BQNNRBKR w HEhe - 1 9",
+        &[21, 807, 18_002, 667_366, 16_253_601],
+    ),
+    (
+        "b1q1rrkb/pppppppp/3nn3/8/P7/1PPP4/4PPPP/BQNNRKRB w GE - 1 9",
+        &[20, 479, 10_471, 273_318, 6_417_013],
+    ),
+    (
+        "qbbnnrkr/2pp2pp/p7/1p2pp2/8/P3PP2/1PPP1KPP/QBBNNR1R w hf - 0 9",
+        &[22, 593, 13_440, 382_958, 9_183_776],
+    ),
+    (
+        "1nbbnrkr/p1p1ppp1/3p4/1p3P1p/3Pq2P/8/PPP1P1P1/QNBBNRKR w HFhf - 0 9",
+        &[28, 1_120, 31_058, 1_171_749, 34_030_312],
+    ),
+    (
+        "qnbnr1kr/ppp1b1pp/4p3/3p1p2/8/2NPP3/PPP1BPPP/QNB1R1KR w HEhe - 1 9",
+        &[29, 899, 26_578, 824_055, 24_851_983],
+    ),
+    (
+        "q1bnrkr1/ppppp2p/2n2p2/4b1p1/2NP4/8/PPP1PPPP/QNB1RRKB w ge - 1 9",
+        &[30, 860, 24_566, 732_757, 21_093_346],
+    ),
+    (
+        "qbn1brkr/ppp1p1p1/2n4p/3p1p2/P7/6PP/QPPPPP2/1BNNBRKR w HFhf - 0 9",
+        &[25, 635, 17_054, 465_806, 13_203_304],
+    ),
+    (
+        "4k3/8/8/8/8/8/8/6KR w H - 0 1",
+        &[12, 53, 948, 5_571, 102_638],
+    ),
+    (
+        "4k3/8/8/8/8/8/8/qR1K4 w B - 0 1",
+        &[7, 126, 1_558, 34_815, 468_742],
+    ),
+];
+
 /// Checks every depth whose leaf count is at most `max_nodes`.
 fn run_suite(max_nodes: u64) {
-    for (fen, counts) in SUITE {
+    for (fen, counts) in SUITE.into_iter().chain(CHESS960) {
         let mut board = Board::from_fen(fen).unwrap();
+        let before = board.fen();
         for (depth, &expected) in (1..).zip(counts).filter(|&(_, &n)| n <= max_nodes) {
             assert_eq!(perft(&mut board, depth), expected, "{fen} at depth {depth}");
         }
-        assert_eq!(board.fen(), fen, "board not restored");
+        assert_eq!(board.fen(), before, "board not restored");
     }
 }
 

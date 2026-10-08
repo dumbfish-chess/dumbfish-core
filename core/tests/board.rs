@@ -63,6 +63,27 @@ fn fen_normalization() {
 }
 
 #[test]
+fn chess960_fen() {
+    for (fen, normalized, why) in [
+        (
+            "bqnb1rkr/pp3ppp/3ppn2/2p5/5P2/P2P4/NPP1P1PP/BQ1BNRKR w HFhf - 2 9",
+            "bqnb1rkr/pp3ppp/3ppn2/2p5/5P2/P2P4/NPP1P1PP/BQ1BNRKR w KQkq - 2 9",
+            "Shredder-FEN files become K and Q for the outermost rooks",
+        ),
+        (
+            "rr2k3/8/8/8/8/8/8/RR2K2R w BHb - 0 1",
+            "rr2k3/8/8/8/8/8/8/RR2K2R w KBb - 0 1",
+            "an inner rook keeps its file (X-FEN)",
+        ),
+    ] {
+        let board = Board::from_fen(fen).unwrap();
+        assert_eq!(board.fen(), normalized, "{why}");
+        assert_eq!(Board::from_fen(normalized).unwrap().fen(), normalized);
+        assert_consistent(&board);
+    }
+}
+
+#[test]
 fn fen_errors() {
     for fen in [
         "",
@@ -82,6 +103,9 @@ fn fen_errors() {
         "4k3/8/8/8/8/8/8/4K3 w - - 0 1 extra",
         "4k3/8/8/8/8/8/8/P3K3 w - - 0 1",
         "4k2R/8/8/8/8/8/8/4K3 w - - 0 1",
+        "4k3/8/8/8/8/8/8/4K3 w A - 0 1",
+        "4k3/8/8/8/8/8/8/R4K2 w E - 0 1",
+        "4k3/8/8/8/8/8/4K3/R7 w Q - 0 1",
     ] {
         assert!(Board::from_fen(fen).is_err(), "{fen:?}");
     }
@@ -162,6 +186,26 @@ fn make_unmake() {
             "4k3/P7/8/8/8/8/8/4K3 w - - 5 9",
             Move::new(A7, A8, Promotion(PieceKind::Queen)),
             "Q3k3/8/8/8/8/8/8/4K3 b - - 0 9",
+        ),
+        (
+            "4k3/8/8/8/8/8/8/5KR1 w K - 0 1",
+            Move::new(F1, G1, Castle),
+            "4k3/8/8/8/8/8/8/5RK1 b - - 1 1",
+        ),
+        (
+            "4k3/8/8/8/8/8/8/6KR w K - 0 1",
+            Move::new(G1, G1, Castle),
+            "4k3/8/8/8/8/8/8/5RK1 b - - 1 1",
+        ),
+        (
+            "4k3/8/8/8/8/8/8/1R1K4 w Q - 0 1",
+            Move::new(D1, C1, Castle),
+            "4k3/8/8/8/8/8/8/2KR4 b - - 1 1",
+        ),
+        (
+            "rr2k3/8/8/8/8/8/8/RR2K2R w KBb - 0 1",
+            Move::new(E1, C1, Castle),
+            "rr2k3/8/8/8/8/8/8/R1KR3R b b - 1 1",
         ),
     ];
     for (fen, mv, expected) in cases {
