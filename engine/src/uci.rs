@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime};
 
-use dumbfish_core::{Board, Color};
+use dumbfish_core::{Board, Color, Move, MoveKind};
 
 use crate::eval;
 use crate::search::{self, Iteration, Limits, MATE, MAX_DEPTH};
@@ -47,6 +47,7 @@ pub fn run() {
         multipv: 1,
         show_wdl: false,
         debug: false,
+        chess960: false,
         tablebases: None,
         stop: Arc::new(AtomicBool::new(false)),
         pondering: Arc::new(AtomicBool::new(false)),
@@ -71,6 +72,7 @@ pub fn run() {
                 println!("option name MultiPV type spin default 1 min 1 max {MAX_MULTIPV}");
                 println!("option name Ponder type check default false");
                 println!("option name UCI_ShowWDL type check default false");
+                println!("option name UCI_Chess960 type check default false");
                 println!("option name SyzygyPath type string default <empty>");
                 println!(
                     "option name UCI_EngineAbout type string default dumbfish {} by tolstovrob, \
@@ -122,7 +124,7 @@ pub fn run() {
             }
             Some("position") => {
                 engine.wait();
-                match parse_position(tokens) {
+                match parse_position(tokens, engine.chess960) {
                     Ok(b) => engine.board = b,
                     Err(e) => println!("info string {e}"),
                 }
@@ -164,6 +166,8 @@ struct Engine {
     show_wdl: bool,
     /// Set by `debug on`: the engine also reports how it understood `position` and `go`.
     debug: bool,
+    /// Castling moves are written as the king taking its own rook.
+    chess960: bool,
     tablebases: Option<Arc<Tablebases>>,
     stop: Arc<AtomicBool>,
     /// Set while a `go ponder` search waits for `ponderhit`.
@@ -249,6 +253,10 @@ impl Engine {
                 self.show_wdl = *value == "true";
                 Ok(())
             }
+            ("uci_chess960", [value @ ("true" | "false")]) => {
+                self.chess960 = *value == "true";
+                Ok(())
+            }
             ("syzygypath", _) => {
                 let paths = value.join(" ");
                 let tablebases = match paths.as_str() {
@@ -282,7 +290,7 @@ impl Engine {
     /// Starts a search on a separate thread so that `stop` and `isready` stay responsive.
     fn go<'a>(&mut self, tokens: impl Iterator<Item = &'a str>) {
         let start = Instant::now();
-        let go = parse_go(tokens, &self.board);
+        let go = parse_go(tokens, &self.board, self.chess960);
         if self.debug {
             let budget = go.budget.map(|b| (b.soft, b.hard));
             println!(
@@ -319,10 +327,12 @@ impl Engine {
         self.pondering.store(go.ponder, Ordering::Relaxed);
         let (stop, pondering) = (Arc::clone(&self.stop), Arc::clone(&self.pondering));
         let infinite = go.infinite;
-        let show_wdl = self.show_wdl;
+        let (show_wdl, chess960) = (self.show_wdl, self.chess960);
         let mut board = self.board.clone();
+        let root = self.board.clone();
         let tt = self.tt.take().expect("no search is running");
         self.worker = Some(thread::spawn(move || {
+            let write = |mv: Move| uci_move(&root, mv, chess960);
             let mut line = Vec::new();
             let (best, _) = search::search_reporting(
                 &mut board,
@@ -330,13 +340,14 @@ impl Engine {
                 &stop,
                 &tt,
                 |it| {
-                    print_info(it, show_wdl);
+                    print_info(it, show_wdl, &write);
                     if it.multipv == 1 {
                         line.clone_from(&it.pv);
                     }
                 },
                 |depth, mv, number| {
                     if start.elapsed() >= CURRMOVE_AFTER {
+                        let mv = write(mv);
                         println!("info depth {depth} currmove {mv} currmovenumber {number}");
                     }
                 },
@@ -345,12 +356,14 @@ impl Engine {
                 thread::sleep(Duration::from_millis(5));
             }
             let ponder = match (best, &line[..]) {
-                (Some(best), [first, reply, ..]) if *first == best => format!(" ponder {reply}"),
+                (Some(best), [first, reply, ..]) if *first == best => {
+                    format!(" ponder {}", write(*reply))
+                }
                 _ => String::new(),
             };
             println!(
                 "bestmove {}{ponder}",
-                best.map_or("0000".to_string(), |m| m.to_string())
+                best.map_or("0000".to_string(), write)
             );
             tt
         }));
@@ -389,8 +402,19 @@ fn parse_in(value: &[&str], min: i32, max: i32) -> Result<i32, String> {
     }
 }
 
+/// `mv` in UCI notation; in Chess960 a castling move is the king taking its own rook.
+fn uci_move(board: &Board, mv: Move, chess960: bool) -> String {
+    match mv.kind() {
+        MoveKind::Castle if chess960 => format!("{}{}", mv.from(), board.castling_rook(mv).0),
+        _ => mv.to_string(),
+    }
+}
+
 /// `position (startpos | fen <fen>) [moves <move>...]`. Nothing changes on error.
-fn parse_position<'a>(mut tokens: impl Iterator<Item = &'a str>) -> Result<Board, String> {
+fn parse_position<'a>(
+    mut tokens: impl Iterator<Item = &'a str>,
+    chess960: bool,
+) -> Result<Board, String> {
     let mut board = match tokens.next() {
         Some("startpos") => {
             match tokens.next() {
@@ -409,7 +433,7 @@ fn parse_position<'a>(mut tokens: impl Iterator<Item = &'a str>) -> Result<Board
         let mv = board
             .legal_moves()
             .iter()
-            .find(|m| m.to_string() == token)
+            .find(|&&m| uci_move(&board, m, chess960) == token)
             .copied();
         board.make_move(mv.ok_or_else(|| format!("illegal move {token:?} in {}", board.fen()))?);
     }
@@ -440,7 +464,7 @@ impl Budget {
     }
 }
 
-fn parse_go<'a>(tokens: impl Iterator<Item = &'a str>, board: &Board) -> Go {
+fn parse_go<'a>(tokens: impl Iterator<Item = &'a str>, board: &Board, chess960: bool) -> Go {
     let us = board.side_to_move();
     let legal = board.legal_moves();
     let mut limits = Limits::default();
@@ -466,7 +490,7 @@ fn parse_go<'a>(tokens: impl Iterator<Item = &'a str>, board: &Board) -> Go {
             "searchmoves" => {
                 while let Some(mv) = tokens
                     .peek()
-                    .and_then(|t| legal.iter().find(|m| m.to_string() == *t))
+                    .and_then(|t| legal.iter().find(|&&m| uci_move(board, m, chess960) == *t))
                 {
                     limits.searchmoves.push(*mv);
                     tokens.next();
@@ -494,7 +518,7 @@ fn parse_go<'a>(tokens: impl Iterator<Item = &'a str>, board: &Board) -> Go {
     }
 }
 
-fn print_info(it: &Iteration, show_wdl: bool) {
+fn print_info(it: &Iteration, show_wdl: bool, write: &dyn Fn(Move) -> String) {
     let nps = (it.nodes as f64 / it.elapsed.as_secs_f64().max(1e-3)) as u64;
     let score = match it.score {
         s if s >= MATE - MAX_DEPTH as i32 => format!("mate {}", (MATE - s + 1) / 2),
@@ -507,7 +531,7 @@ fn print_info(it: &Iteration, show_wdl: bool) {
     } else {
         score
     };
-    let pv: Vec<_> = it.pv.iter().map(|m| m.to_string()).collect();
+    let pv: Vec<_> = it.pv.iter().map(|&m| write(m)).collect();
     println!(
         "info depth {} seldepth {} multipv {} score {score} nodes {} nps {nps} hashfull {} tbhits {} \
          time {} pv {}",

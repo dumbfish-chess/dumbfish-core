@@ -292,7 +292,7 @@ fn hash_option() {
     );
     engine.send("setoption name Hash value 0");
     engine.send("setoption name Hash value lots");
-    engine.send("setoption name UCI_Chess960 value true");
+    engine.send("setoption name UCI_ShowCurrLine value true");
     engine.send("setoption name Hash value 1");
     engine.send("isready");
     let lines = engine.read_until("readyok");
@@ -750,4 +750,29 @@ fn clear_hash_and_engine_about() {
     assert!(hashfull(&mut engine, 7) > 0, "a search fills the table");
     engine.send("setoption name Clear Hash");
     assert_eq!(hashfull(&mut engine, 1), 0, "Clear Hash empties it");
+}
+
+#[test]
+fn chess960_castling_is_the_king_taking_its_rook() {
+    let mut engine = Engine::start();
+    engine.send("uci");
+    let lines = engine.read_until("uciok");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l == "option name UCI_Chess960 type check default false"),
+        "{lines:?}"
+    );
+    engine.send("setoption name UCI_Chess960 value true");
+    engine.send("debug on");
+    engine.send("position fen 4k3/8/8/8/8/8/8/6KR w K - 0 1 moves g1h1");
+    assert_eq!(
+        engine.read_until("info string").last().unwrap(),
+        "info string position 4k3/8/8/8/8/8/8/5RK1 b - - 1 1",
+        "the king stays on g1 and the rook goes to f1"
+    );
+    engine.send("debug off");
+    engine.send("position fen 4k3/8/8/8/8/8/8/6KR w K - 0 1");
+    engine.send("go depth 2 searchmoves g1h1");
+    assert_eq!(engine.best_move(), "g1h1");
 }

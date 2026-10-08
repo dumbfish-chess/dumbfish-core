@@ -76,6 +76,7 @@ info depth 9 seldepth 21 multipv 1 score cp 42 wdl 323 500 177 nodes 193734 nps 
 | `MultiPV` | spin | 1 | 1–256 | сколько лучших линий показывать |
 | `Ponder` | check | false | | разрешение думать в чужое время; само обдумывание включает `go ponder` |
 | `UCI_ShowWDL` | check | false | | добавлять `wdl` к оценке |
+| `UCI_Chess960` | check | false | | шахматы Фишера: рокировка записывается как взятие королём своей ладьи (`e1h1`); FEN в X-FEN или Shredder-FEN принимается в любом режиме |
 | `SyzygyPath` | string | `<empty>` | каталоги через `:` | эндшпильные таблицы Syzygy (`.rtbw`, `.rtbz`); ответ — `info string found N tablebases, up to K pieces`. Если позиция в корне есть в таблицах, ищутся только ходы с лучшим результатом (кратчайший выигрыш, самый долгий проигрыш), иначе поиск берёт результат из таблиц после взятий и ходов пешкой. При `Skill Level` ниже 20 не используются |
 | `Skill Level` | spin | 20 | 0–20 | ниже 20: лимит узлов `256 << (уровень / 2)` и случайная добавка до `15 × (20 − уровень)` cp к оценкам ходов из корня; поиск в один поток |
 | `Style` | combo | balanced | balanced, aggressive, defensive, positional, materialistic | пресет из `engine/styles.txt`: множители групп и `Contempt` |

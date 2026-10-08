@@ -21,6 +21,7 @@ pub(super) fn move_order_key(board: &Board, mv: Move) -> i32 {
     const VALUE: [i32; 6] = [1, 3, 3, 5, 9, 0];
     let value = |sq| board.piece_on(sq).map_or(0, |p| VALUE[p.kind.index()]);
     let gain = match mv.kind() {
+        MoveKind::Castle => 0,
         MoveKind::EnPassant => VALUE[0],
         MoveKind::Promotion(kind) => value(mv.to()) + VALUE[kind.index()] - VALUE[0],
         _ => value(mv.to()),
