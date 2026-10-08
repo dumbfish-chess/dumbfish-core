@@ -6,6 +6,10 @@ use super::*;
 /// more cannot raise the score to alpha.
 const DELTA_MARGIN: i32 = 200;
 
+/// Quiet moves whose history and continuation history are below this per ply of depth are
+/// skipped, up to depth 4.
+const HISTORY_PRUNING: i32 = 2048;
+
 /// What the singular extension search found about the move from the transposition table.
 enum Singular {
     /// Search the move this many plies deeper; shallower if negative.
@@ -208,10 +212,9 @@ impl Searcher<'_> {
             if !pv
                 && !in_check
                 && i > 0
-                && depth <= 8
                 && best > MAX_DEPTH as i32 - MATE
-                && mv.kind() != MoveKind::Castle
-                && see(self.board, mv) < -margin
+                && ((depth <= 8 && mv.kind() != MoveKind::Castle && see(self.board, mv) < -margin)
+                    || (quiet && depth <= 4 && history < -HISTORY_PRUNING * depth as i32))
             {
                 continue;
             }
