@@ -94,6 +94,22 @@ impl Searcher<'_> {
 
         if let Some(eval) = static_eval
             && !pv
+            && excluded.is_none()
+            && depth <= 3
+            && alpha.abs() < MATE - MAX_DEPTH as i32
+            && eval + 250 * depth as i32 <= alpha
+        {
+            let score = self.quiescence(ply, alpha, alpha + 1);
+            if self.aborted {
+                return 0;
+            }
+            if score <= alpha {
+                return score;
+            }
+        }
+
+        if let Some(eval) = static_eval
+            && !pv
             && depth >= 3
             && eval >= beta
             && excluded.is_none()
