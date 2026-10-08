@@ -6,6 +6,9 @@ use super::*;
 /// more cannot raise the score to alpha.
 const DELTA_MARGIN: i32 = 200;
 
+/// ProbCut cuts a node when a capture beats beta by this much in a shallower search.
+const PROBCUT_MARGIN: i32 = 200;
+
 /// Depth reduction of the `number`-th move (from 1) of a node searched to `depth`.
 fn reduction(depth: u32, number: usize) -> u32 {
     (0.75 + f64::from(depth).ln() * (number as f64).ln() / 2.25) as u32
@@ -130,6 +133,21 @@ impl Searcher<'_> {
                 } else {
                     score
                 };
+            }
+        }
+
+        if let Some(eval) = static_eval
+            && !pv
+            && depth >= 5
+            && excluded.is_none()
+            && beta.abs() < MATE - MAX_DEPTH as i32
+        {
+            let probcut_beta = beta + PROBCUT_MARGIN;
+            let tt_says_below = entry.is_some_and(|e| {
+                u32::from(e.depth) + 3 >= depth && score_from_tt(e.score, ply) < probcut_beta
+            });
+            if !tt_says_below && let Some(score) = self.probcut(eval, probcut_beta, depth, ply) {
+                return score;
             }
         }
 
@@ -265,6 +283,41 @@ impl Searcher<'_> {
             });
         }
         best
+    }
+
+    /// A score of at least `probcut_beta` from a capture whose exchange alone gains enough over
+    /// the static evaluation `eval`, confirmed by quiescence search and then by a search four
+    /// plies shallower; it is stored as a lower bound.
+    fn probcut(&mut self, eval: i32, probcut_beta: i32, depth: u32, ply: i32) -> Option<i32> {
+        let mut captures = self.board.legal_captures();
+        order_moves(self.board, &mut captures);
+        for &mv in captures.iter() {
+            if see(self.board, mv) < probcut_beta - eval {
+                continue;
+            }
+            self.played[ply as usize] = Some(mv);
+            self.board.make_move(mv);
+            let window = (-probcut_beta, -probcut_beta + 1);
+            let mut score = -self.quiescence(ply + 1, window.0, window.1);
+            if score >= probcut_beta && !self.aborted {
+                score = -self.negamax(depth - 4, ply + 1, window.0, window.1);
+            }
+            self.board.unmake_move();
+            if self.aborted {
+                return Some(0);
+            }
+            if score >= probcut_beta {
+                self.tt.store(Entry {
+                    key: self.board.hash(),
+                    best: Some(mv),
+                    score: score_to_tt(score, ply),
+                    depth: (depth - 3) as u8,
+                    bound: Bound::Lower,
+                });
+                return Some(score);
+            }
+        }
+        None
     }
 
     /// One more ply for the move from the transposition table `entry` if a reduced search of
