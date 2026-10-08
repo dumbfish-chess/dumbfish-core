@@ -16,6 +16,22 @@ use crate::tt::{self, TranspositionTable};
 use crate::wdl;
 
 const MAX_THREADS: usize = 256;
+/// Commands the engine knows. Unknown tokens before one of them are skipped, as the protocol
+/// asks: `joho debug on` turns debug mode on.
+const COMMANDS: [&str; 12] = [
+    "uci",
+    "debug",
+    "isready",
+    "setoption",
+    "register",
+    "ucinewgame",
+    "position",
+    "go",
+    "stop",
+    "ponderhit",
+    "quit",
+    "eval",
+];
 const MAX_MULTIPV: usize = 256;
 
 /// Reads UCI commands from stdin until `quit` or end of input.
@@ -28,6 +44,7 @@ pub fn run() {
         threads: 1,
         multipv: 1,
         show_wdl: false,
+        debug: false,
         tablebases: None,
         stop: Arc::new(AtomicBool::new(false)),
         pondering: Arc::new(AtomicBool::new(false)),
@@ -38,7 +55,7 @@ pub fn run() {
     for line in io::stdin().lines() {
         let Ok(line) = line else { break };
         let mut tokens = line.split_whitespace();
-        match tokens.next() {
+        match tokens.by_ref().find(|t| COMMANDS.contains(t)) {
             Some("uci") => {
                 println!("id name dumbfish {}", env!("CARGO_PKG_VERSION"));
                 println!("id author tolstovrob");
@@ -78,6 +95,12 @@ pub fn run() {
                 println!("uciok");
             }
             Some("isready") => println!("readyok"),
+            Some("debug") => match tokens.next() {
+                Some("on") => engine.debug = true,
+                Some("off") => engine.debug = false,
+                _ => println!("info string expected debug on or debug off"),
+            },
+            Some("register") => {}
             Some("setoption") => {
                 engine.wait();
                 if let Err(e) = engine.set_option(tokens) {
@@ -95,6 +118,9 @@ pub fn run() {
                     Ok(b) => engine.board = b,
                     Err(e) => println!("info string {e}"),
                 }
+                if engine.debug {
+                    println!("info string position {}", engine.board.fen());
+                }
             }
             Some("go") => {
                 engine.wait();
@@ -107,8 +133,12 @@ pub fn run() {
             Some("ponderhit") => engine.ponderhit(),
             Some("stop") => engine.finish(),
             Some("quit") => break,
-            Some(other) => println!("info string unknown command: {other}"),
-            None => {}
+            Some(_) => {}
+            None => {
+                if let Some(first) = line.split_whitespace().next() {
+                    println!("info string unknown command: {first}");
+                }
+            }
         }
     }
     engine.finish();
@@ -124,6 +154,8 @@ struct Engine {
     threads: usize,
     multipv: usize,
     show_wdl: bool,
+    /// Set by `debug on`: the engine also reports how it understood `position` and `go`.
+    debug: bool,
     tablebases: Option<Arc<Tablebases>>,
     stop: Arc<AtomicBool>,
     /// Set while a `go ponder` search waits for `ponderhit`.
@@ -238,6 +270,18 @@ impl Engine {
     fn go<'a>(&mut self, tokens: impl Iterator<Item = &'a str>) {
         let start = Instant::now();
         let go = parse_go(tokens, &self.board);
+        if self.debug {
+            let budget = go.budget.map(|b| (b.soft, b.hard));
+            println!(
+                "info string go depth {:?} nodes {:?} time budget (soft, hard) {budget:?} \
+                 infinite {} ponder {} searchmoves {}",
+                go.limits.depth,
+                go.limits.nodes,
+                go.infinite,
+                go.ponder,
+                go.limits.searchmoves.len()
+            );
+        }
         let mut limits = go.limits;
         let seed = SystemTime::UNIX_EPOCH
             .elapsed()

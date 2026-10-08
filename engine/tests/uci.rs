@@ -642,3 +642,23 @@ fn plays_tablebase_wins() {
         "{best} keeps the win"
     );
 }
+
+#[test]
+fn unknown_tokens_before_a_command_are_skipped() {
+    let mut engine = Engine::start();
+    engine.send("joho isready");
+    engine.read_until("readyok");
+    engine.send("joho debug on");
+    engine.send("position startpos moves e2e4");
+    assert_eq!(
+        engine.read_until("info string").last().unwrap(),
+        "info string position rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+        "debug mode reports the position"
+    );
+    engine.send("debug off");
+    engine.send("register later");
+    engine.send("position startpos");
+    engine.send("isready");
+    let lines = engine.read_until("readyok");
+    assert_eq!(lines, ["readyok"], "nothing reported without debug mode");
+}
