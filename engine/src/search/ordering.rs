@@ -4,8 +4,6 @@ use super::*;
 
 pub(super) const MAX_HISTORY: i32 = 16_384;
 
-/// Captures and promotions first, by most valuable victim, then least valuable attacker;
-/// quiet moves keep their generation order.
 /// Index into `continuation` of the quiet move `mv` after the move given by
 /// `Searcher::countermove_slot`: previous piece and square, then this piece and square.
 pub(super) fn continuation_index(board: &Board, (piece, to): (usize, usize), mv: Move) -> usize {
@@ -13,6 +11,8 @@ pub(super) fn continuation_index(board: &Board, (piece, to): (usize, usize), mv:
     ((piece * 64 + to) * 12 + moving) * 64 + mv.to().index()
 }
 
+/// Captures and promotions first, by most valuable victim, then least valuable attacker;
+/// quiet moves keep their generation order.
 pub(super) fn order_moves(board: &Board, moves: &mut [Move]) {
     moves.sort_by_key(|&mv| Reverse(move_order_key(board, mv)));
 }
