@@ -156,6 +156,17 @@ impl Searcher<'_> {
             } else {
                 0
             };
+            let margin = if quiet { 50 } else { 100 } * depth as i32;
+            if !pv
+                && !in_check
+                && i > 0
+                && depth <= 8
+                && best > MAX_DEPTH as i32 - MATE
+                && mv.kind() != MoveKind::Castle
+                && see(self.board, mv) < -margin
+            {
+                continue;
+            }
             self.played[ply as usize] = Some(mv);
             self.board.make_move(mv);
             let gives_check = self.board.in_check();
