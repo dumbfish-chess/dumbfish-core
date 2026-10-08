@@ -306,7 +306,8 @@ impl Searcher<'_> {
     }
 
     /// Searches captures and promotions that do not lose material by `see`, until the position
-    /// is quiet; the side to move may also stand pat on the static evaluation.
+    /// is quiet; the side to move may also stand pat on the static evaluation. In check it
+    /// searches every evasion instead, and finds mate.
     pub(super) fn quiescence(&mut self, ply: i32, mut alpha: i32, beta: i32) -> i32 {
         self.nodes += 1;
         self.seldepth = self.seldepth.max(ply as u32);
@@ -324,13 +325,25 @@ impl Searcher<'_> {
             }
         }
         let original_alpha = alpha;
-        let stand_pat = self.corrected(self.evaluate());
+        let in_check = self.board.in_check();
+        let stand_pat = if in_check {
+            -INFINITY
+        } else {
+            self.corrected(self.evaluate())
+        };
         if stand_pat >= beta {
             return stand_pat;
         }
         alpha = alpha.max(stand_pat);
 
-        let mut moves = self.board.legal_captures();
+        let mut moves = if in_check {
+            self.board.legal_moves()
+        } else {
+            self.board.legal_captures()
+        };
+        if in_check && moves.is_empty() {
+            return ply - MATE;
+        }
         order_moves(self.board, &mut moves);
         let (mut best, mut best_move) = (stand_pat, None);
         for &mv in moves.iter() {
@@ -339,10 +352,13 @@ impl Searcher<'_> {
                 _ => self.board.piece_on(mv.to()).map(|p| p.kind),
             };
             let promotion = matches!(mv.kind(), MoveKind::Promotion(_));
-            if !promotion && stand_pat + captured.map_or(0, piece_value) + DELTA_MARGIN <= alpha {
+            if !in_check
+                && !promotion
+                && stand_pat + captured.map_or(0, piece_value) + DELTA_MARGIN <= alpha
+            {
                 continue;
             }
-            if see(self.board, mv) < 0 {
+            if !in_check && see(self.board, mv) < 0 {
                 continue;
             }
             self.board.make_move(mv);
