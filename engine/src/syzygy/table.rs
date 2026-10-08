@@ -200,16 +200,15 @@ static MAPS: LazyLock<Maps> = LazyLock::new(|| {
         }
     }
 
-    let mut available = 47;
     for lead in 1..=5 {
         for file in 0..4 {
             let mut index = 0;
             for rank in 1..=6 {
                 let sq = rank * 8 + file;
                 if lead == 1 {
+                    let available = 47 - 2 * (6 * file + rank - 1) as u64;
                     maps.pawns[sq] = available;
                     maps.pawns[sq ^ 7] = available - 1;
-                    available -= 2;
                 }
                 maps.lead_pawn_index[lead][sq] = index;
                 index += maps.binomial[lead - 1][maps.pawns[sq] as usize];
