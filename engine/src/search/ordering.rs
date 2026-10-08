@@ -80,30 +80,33 @@ impl Searcher<'_> {
         });
     }
 
-    /// History plus continuation history of the quiet move `mv` at `ply`, within
-    /// `-2 * MAX_HISTORY..=2 * MAX_HISTORY`.
+    /// History plus continuation history after the moves one and two plies back of the quiet
+    /// move `mv` at `ply`, within `-3 * MAX_HISTORY..=3 * MAX_HISTORY`.
     pub(super) fn quiet_history(&self, mv: Move, ply: i32) -> i32 {
         let history = &self.tables.history[self.board.side_to_move().index()];
         history[mv.from().index()][mv.to().index()]
-            + self.countermove_slot(ply).map_or(0, |p| {
-                self.tables.continuation[continuation_index(self.board, p, mv)]
-            })
+            + self
+                .continuation_slots(ply)
+                .into_iter()
+                .flatten()
+                .map(|p| self.tables.continuation[continuation_index(self.board, p, mv)])
+                .sum::<i32>()
     }
 
     /// Rewards the quiet move that caused a beta cutoff and penalizes the quiet moves tried
-    /// before it, by `history_bonus`, in the history and in the continuation history of the
-    /// move that led to the node at `ply`; values decay towards zero as they approach
-    /// `MAX_HISTORY`.
+    /// before it, by `history_bonus`, in the history and in the continuation histories of the
+    /// moves one and two plies before the node at `ply`; values decay towards zero as they
+    /// approach `MAX_HISTORY`.
     pub(super) fn update_history(&mut self, cutoff: Move, tried: &[Move], depth: u32, ply: i32) {
         let bonus = history_bonus(depth);
-        let previous = self.countermove_slot(ply);
+        let previous = self.continuation_slots(ply);
         let history = &mut self.tables.history[self.board.side_to_move().index()];
         let continuation = &mut self.tables.continuation;
         let board = &*self.board;
         let mut update = |mv: Move, bonus: i32| {
             let h = &mut history[mv.from().index()][mv.to().index()];
             *h += bonus - *h * bonus.abs() / MAX_HISTORY;
-            if let Some(p) = previous {
+            for p in previous.into_iter().flatten() {
                 let c = &mut continuation[continuation_index(board, p, mv)];
                 *c += bonus - *c * bonus.abs() / MAX_HISTORY;
             }
@@ -151,8 +154,15 @@ impl Searcher<'_> {
     /// Index into `countermoves` for the move that led to the node at `ply`: the piece that made
     /// it and its target square; `None` at the root and after a null move.
     pub(super) fn countermove_slot(&self, ply: i32) -> Option<(usize, usize)> {
-        let previous = self.played[(ply as usize).checked_sub(1)?]?;
-        let piece = self.board.piece_on(previous.to())?;
-        Some((piece.index(), previous.to().index()))
+        self.continuation_slots(ply)[0]
+    }
+
+    /// The pieces and target squares of the moves one and two plies before the node at `ply`,
+    /// where known: indices into `countermoves` and `continuation`.
+    pub(super) fn continuation_slots(&self, ply: i32) -> [Option<(usize, usize)>; 2] {
+        [1, 2].map(|back| {
+            let (mv, piece) = self.played[(ply as usize).checked_sub(back)?]?;
+            Some((piece, mv.to().index()))
+        })
     }
 }

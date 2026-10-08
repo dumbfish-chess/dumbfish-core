@@ -396,8 +396,9 @@ struct Searcher<'a> {
     pv_len: [usize; MAX_PLY + 1],
     /// Deepest ply reached, quiescence search included.
     seldepth: u32,
-    /// The move made at each ply of the current line; `None` for a null move.
-    played: [Option<Move>; MAX_PLY + 1],
+    /// The move made at each ply of the current line with the index of the piece that made it;
+    /// `None` for a null move.
+    played: [Option<(Move, usize)>; MAX_PLY + 1],
     /// A move to leave out at each ply, for the singular extension search.
     excluded: [Option<Move>; MAX_PLY + 1],
     /// The static evaluation at each ply of the current line; `None` in check.
@@ -447,6 +448,13 @@ impl<'a> Searcher<'a> {
             tablebases: None,
             on_root_move: None,
         }
+    }
+
+    /// Makes `mv` at `ply` and records it in `played`.
+    fn play(&mut self, ply: i32, mv: Move) {
+        let piece = self.board.piece_on(mv.from()).expect("a piece moves");
+        self.played[ply as usize] = Some((mv, piece.index()));
+        self.board.make_move(mv);
     }
 
     fn flush_nodes(&mut self) {

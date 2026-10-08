@@ -218,8 +218,7 @@ impl Searcher<'_> {
             {
                 continue;
             }
-            self.played[ply as usize] = Some(mv);
-            self.board.make_move(mv);
+            self.play(ply, mv);
             let gives_check = self.board.in_check();
             let futile = !pv
                 && depth <= 3
@@ -312,8 +311,7 @@ impl Searcher<'_> {
             if see(self.board, mv) < probcut_beta - eval {
                 continue;
             }
-            self.played[ply as usize] = Some(mv);
-            self.board.make_move(mv);
+            self.play(ply, mv);
             let window = (-probcut_beta, -probcut_beta + 1);
             let mut score = -self.quiescence(ply + 1, window.0, window.1);
             if score >= probcut_beta && !self.aborted {

@@ -46,8 +46,7 @@ impl Searcher<'_> {
             if let Some(report) = &mut self.on_root_move {
                 report(depth, mv, i + 1);
             }
-            self.played[0] = Some(mv);
-            self.board.make_move(mv);
+            self.play(0, mv);
             let score = self.principal_variation(i == 0, depth - 1, 1, alpha, beta);
             self.board.unmake_move();
             if self.aborted {
@@ -76,8 +75,7 @@ impl Searcher<'_> {
             if let Some(report) = &mut self.on_root_move {
                 report(depth, mv, i + 1);
             }
-            self.played[0] = Some(mv);
-            self.board.make_move(mv);
+            self.play(0, mv);
             let score = -self.negamax(depth - 1, 1, -INFINITY, INFINITY);
             self.board.unmake_move();
             if self.aborted {
