@@ -89,9 +89,15 @@ impl Searcher<'_> {
         if depth >= 4 && entry.and_then(|e| e.best).is_none() {
             depth -= 1;
         }
+        if depth == 0 {
+            if self.board.halfmove_clock() >= 100 {
+                return self.draw_score(ply);
+            }
+            return self.quiescence(ply, alpha, beta);
+        }
 
         let pv = beta - alpha > 1;
-        let raw_eval = (!in_check && depth > 0).then(|| {
+        let raw_eval = (!in_check).then(|| {
             entry
                 .and_then(|e| e.eval)
                 .unwrap_or_else(|| self.evaluate())
@@ -178,9 +184,6 @@ impl Searcher<'_> {
         }
         if self.board.halfmove_clock() >= 100 {
             return self.draw_score(ply);
-        }
-        if depth == 0 {
-            return self.quiescence(ply, alpha, beta);
         }
         let tt_move = entry.and_then(|e| e.best);
         let tt_first = tt_move.filter(|mv| moves.contains(mv));
