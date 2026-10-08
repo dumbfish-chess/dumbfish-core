@@ -153,6 +153,7 @@ impl Searcher<'_> {
         let original_alpha = alpha;
         let (mut best, mut best_move) = (-INFINITY, None);
         let mut quiets_tried = MoveList::default();
+        let mut captures_tried = MoveList::default();
         for (i, &mv) in moves.iter().enumerate() {
             if Some(mv) == excluded {
                 continue;
@@ -231,10 +232,13 @@ impl Searcher<'_> {
                     }
                     self.update_history(mv, &quiets_tried, depth, ply);
                 }
+                self.update_capture_history((!quiet).then_some(mv), &captures_tried, depth);
                 break;
             }
             if quiet {
                 quiets_tried.push(mv);
+            } else {
+                captures_tried.push(mv);
             }
         }
 

@@ -11,6 +11,18 @@ pub(super) fn continuation_index(board: &Board, (piece, to): (usize, usize), mv:
     ((piece * 64 + to) * 12 + moving) * 64 + mv.to().index()
 }
 
+/// Index into `capture_history` of `mv`: the moving piece, the target square and the
+/// captured kind; `None` if `mv` captures nothing.
+pub(super) fn capture_index(board: &Board, mv: Move) -> Option<usize> {
+    let piece = board.piece_on(mv.from())?;
+    let captured = match mv.kind() {
+        MoveKind::EnPassant => PieceKind::Pawn,
+        MoveKind::Castle => return None,
+        _ => board.piece_on(mv.to())?.kind,
+    };
+    Some((piece.index() * 64 + mv.to().index()) * 6 + captured.index())
+}
+
 /// Captures and promotions first, by most valuable victim, then least valuable attacker;
 /// quiet moves keep their generation order.
 pub(super) fn order_moves(board: &Board, moves: &mut [Move]) {
@@ -35,9 +47,9 @@ pub(super) fn move_order_key(board: &Board, mv: Move) -> i32 {
 
 impl Searcher<'_> {
     /// The move from the transposition table first, then captures and promotions that do not
-    /// lose material by `move_order_key`, then the killer moves of this ply and the countermove
-    /// to the last move, then the other quiet moves by history and continuation history, and
-    /// the captures that lose material last.
+    /// lose material by `move_order_key` and capture history, then the killer moves of this ply
+    /// and the countermove to the last move, then the other quiet moves by history and
+    /// continuation history, and the captures that lose material last.
     pub(super) fn order(&self, moves: &mut [Move], tt_move: Option<Move>, ply: i32) {
         let killers = self.killers[ply as usize];
         let previous = self.countermove_slot(ply);
@@ -45,8 +57,16 @@ impl Searcher<'_> {
         moves.sort_by_key(|&mv| {
             Reverse(match move_order_key(self.board, mv) {
                 _ if Some(mv) == tt_move => i32::MAX,
-                tactical if tactical > 0 && see(self.board, mv) >= 0 => 1_000_000 + tactical,
-                tactical if tactical > 0 => -1_000_000 + tactical,
+                tactical if tactical > 0 => {
+                    let history =
+                        capture_index(self.board, mv).map_or(0, |i| self.capture_history[i]);
+                    let key = 1024 * tactical + history;
+                    if see(self.board, mv) >= 0 {
+                        1_000_000 + key
+                    } else {
+                        -1_000_000 + key
+                    }
+                }
                 _ if Some(mv) == killers[0] => 4 * MAX_HISTORY + 2,
                 _ if Some(mv) == killers[1] => 4 * MAX_HISTORY + 1,
                 _ if Some(mv) == countermove => 4 * MAX_HISTORY,
@@ -83,6 +103,31 @@ impl Searcher<'_> {
             }
         };
         update(cutoff, bonus);
+        for &mv in tried {
+            update(mv, -bonus);
+        }
+    }
+
+    /// Rewards `cutoff`, if it is a capture, and penalizes the captures tried before it, by
+    /// `depth²` with the same decay as `update_history`.
+    pub(super) fn update_capture_history(
+        &mut self,
+        cutoff: Option<Move>,
+        tried: &[Move],
+        depth: u32,
+    ) {
+        let bonus = (depth * depth).min(MAX_HISTORY as u32) as i32;
+        let board = &*self.board;
+        let table = &mut self.capture_history;
+        let mut update = |mv: Move, bonus: i32| {
+            if let Some(i) = capture_index(board, mv) {
+                let h = &mut table[i];
+                *h += bonus - *h * bonus.abs() / MAX_HISTORY;
+            }
+        };
+        if let Some(mv) = cutoff {
+            update(mv, bonus);
+        }
         for &mv in tried {
             update(mv, -bonus);
         }
