@@ -27,6 +27,8 @@ pub const TB_WIN: i32 = 30_000;
 pub struct Limits {
     pub depth: Option<u32>,
     pub nodes: Option<u64>,
+    /// Stop once a mate in this many moves or fewer is found.
+    pub mate: Option<u32>,
     /// The search stops here.
     pub deadline: Deadline,
     /// No new iteration starts after this.
@@ -213,7 +215,7 @@ fn main_search(
                 scores = found.iter().map(|&(mv, score, _)| (mv, score)).collect();
             }
         }
-        let Some(&(mv, _, _)) = found.first() else {
+        let Some(&(mv, top, _)) = found.first() else {
             break;
         };
         best = Some(mv);
@@ -234,7 +236,11 @@ fn main_search(
                 elapsed: start.elapsed(),
             });
         }
-        if searcher.aborted {
+        let mated = searcher
+            .limits
+            .mate
+            .is_some_and(|moves| top >= MATE - (2 * moves as i32 - 1));
+        if searcher.aborted || mated {
             break;
         }
     }

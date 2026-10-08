@@ -273,10 +273,11 @@ impl Engine {
         if self.debug {
             let budget = go.budget.map(|b| (b.soft, b.hard));
             println!(
-                "info string go depth {:?} nodes {:?} time budget (soft, hard) {budget:?} \
-                 infinite {} ponder {} searchmoves {}",
+                "info string go depth {:?} nodes {:?} mate {:?} time budget (soft, hard) \
+                 {budget:?} infinite {} ponder {} searchmoves {}",
                 go.limits.depth,
                 go.limits.nodes,
+                go.limits.mate,
                 go.infinite,
                 go.ponder,
                 go.limits.searchmoves.len()
@@ -427,6 +428,7 @@ fn parse_go<'a>(tokens: impl Iterator<Item = &'a str>, board: &Board) -> Go {
         match token {
             "depth" => limits.depth = number().map(|d| d as u32),
             "nodes" => limits.nodes = number(),
+            "mate" => limits.mate = number().map(|n| n as u32),
             "movetime" => movetime = number().map(Duration::from_millis),
             "wtime" | "btime" if (token == "wtime") == (us == Color::White) => {
                 time = number().map(Duration::from_millis)

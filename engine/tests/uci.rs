@@ -662,3 +662,27 @@ fn unknown_tokens_before_a_command_are_skipped() {
     let lines = engine.read_until("readyok");
     assert_eq!(lines, ["readyok"], "nothing reported without debug mode");
 }
+
+#[test]
+fn go_mate_stops_at_the_mate() {
+    let mut engine = Engine::start();
+    engine.send("position fen 7k/8/5K2/8/8/8/8/R7 w - - 0 1");
+    engine.send("go mate 2");
+    let lines = engine.read_until("bestmove");
+    let last_info = lines
+        .iter()
+        .rev()
+        .find(|l| l.starts_with("info depth"))
+        .unwrap();
+    assert!(last_info.contains(" score mate 2 "), "{lines:?}");
+    let depth: u32 = last_info
+        .split_whitespace()
+        .nth(2)
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(
+        depth < 10,
+        "no deeper search once the mate is found: {lines:?}"
+    );
+}
