@@ -31,7 +31,7 @@ pub(super) fn capture_index(board: &Board, mv: Move) -> Option<usize> {
 /// Captures and promotions first, by most valuable victim, then least valuable attacker;
 /// quiet moves keep their generation order.
 pub(super) fn order_moves(board: &Board, moves: &mut [Move]) {
-    moves.sort_by_key(|&mv| Reverse(move_order_key(board, mv)));
+    moves.sort_by_cached_key(|&mv| Reverse(move_order_key(board, mv)));
 }
 
 pub(super) fn move_order_key(board: &Board, mv: Move) -> i32 {
@@ -59,7 +59,7 @@ impl Searcher<'_> {
         let killers = self.killers[ply as usize];
         let previous = self.countermove_slot(ply);
         let countermove = previous.and_then(|(piece, to)| self.tables.countermoves[piece][to]);
-        moves.sort_by_key(|&mv| {
+        moves.sort_by_cached_key(|&mv| {
             Reverse(match move_order_key(self.board, mv) {
                 _ if Some(mv) == tt_move => i32::MAX,
                 tactical if tactical > 0 => {
