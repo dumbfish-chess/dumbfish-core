@@ -707,3 +707,40 @@ fn reports_root_moves_on_long_searches() {
         "{lines:?}"
     );
 }
+
+#[test]
+fn clear_hash_and_engine_about() {
+    let mut engine = Engine::start();
+    engine.send("uci");
+    let lines = engine.read_until("uciok");
+    for option in [
+        "option name Clear Hash type button",
+        "option name UCI_EngineAbout type string default dumbfish ",
+    ] {
+        assert!(
+            lines.iter().any(|l| l.starts_with(option)),
+            "{option}: {lines:?}"
+        );
+    }
+    let hashfull = |engine: &mut Engine, depth: u32| -> u32 {
+        engine.send(&format!("go depth {depth}"));
+        let lines = engine.read_until("bestmove");
+        let info = lines
+            .iter()
+            .rev()
+            .find(|l| l.contains(" hashfull "))
+            .unwrap();
+        info.split(" hashfull ")
+            .nth(1)
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap()
+    };
+    engine.send("position startpos");
+    assert!(hashfull(&mut engine, 7) > 0, "a search fills the table");
+    engine.send("setoption name Clear Hash");
+    assert_eq!(hashfull(&mut engine, 1), 0, "Clear Hash empties it");
+}

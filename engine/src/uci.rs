@@ -66,11 +66,17 @@ pub fn run() {
                     tt::DEFAULT_MEGABYTES,
                     tt::MAX_MEGABYTES
                 );
+                println!("option name Clear Hash type button");
                 println!("option name Threads type spin default 1 min 1 max {MAX_THREADS}");
                 println!("option name MultiPV type spin default 1 min 1 max {MAX_MULTIPV}");
                 println!("option name Ponder type check default false");
                 println!("option name UCI_ShowWDL type check default false");
                 println!("option name SyzygyPath type string default <empty>");
+                println!(
+                    "option name UCI_EngineAbout type string default dumbfish {} by tolstovrob, \
+                     a chess engine with a classical evaluation",
+                    env!("CARGO_PKG_VERSION")
+                );
                 println!(
                     "option name Skill Level type spin default {0} min 0 max {0}",
                     skill::MAX_LEVEL
@@ -234,6 +240,11 @@ impl Engine {
                 Ok(())
             }
             ("ponder", ["true" | "false"]) => Ok(()),
+            ("clear hash", []) => {
+                self.tt().clear();
+                Ok(())
+            }
+            ("uci_engineabout", _) => Ok(()),
             ("uci_showwdl", [value @ ("true" | "false")]) => {
                 self.show_wdl = *value == "true";
                 Ok(())
