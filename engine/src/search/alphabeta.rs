@@ -76,6 +76,7 @@ impl Searcher<'_> {
                     score: score_to_tt(score, ply),
                     depth: (depth + 6).min(MAX_DEPTH) as u8,
                     bound,
+                    eval: None,
                 });
                 return score;
             }
@@ -90,7 +91,11 @@ impl Searcher<'_> {
         }
 
         let pv = beta - alpha > 1;
-        let raw_eval = (!in_check && depth > 0).then(|| self.evaluate());
+        let raw_eval = (!in_check && depth > 0).then(|| {
+            entry
+                .and_then(|e| e.eval)
+                .unwrap_or_else(|| self.evaluate())
+        });
         let static_eval = raw_eval.map(|raw| self.corrected(raw));
         self.static_evals[ply as usize] = static_eval;
         let improving = ply >= 2
@@ -296,6 +301,7 @@ impl Searcher<'_> {
                 score: score_to_tt(best, ply),
                 depth: depth as u8,
                 bound,
+                eval: raw_eval,
             });
         }
         best
@@ -328,6 +334,7 @@ impl Searcher<'_> {
                     score: score_to_tt(score, ply),
                     depth: (depth - 3) as u8,
                     bound: Bound::Lower,
+                    eval: None,
                 });
                 return Some(score);
             }
@@ -397,7 +404,8 @@ impl Searcher<'_> {
             return 0;
         }
         let key = self.board.hash();
-        if let Some(e) = self.tt.probe(key) {
+        let entry = self.tt.probe(key);
+        if let Some(e) = entry {
             let score = score_from_tt(e.score, ply);
             match e.bound {
                 Bound::Exact => return score,
@@ -408,11 +416,12 @@ impl Searcher<'_> {
         }
         let original_alpha = alpha;
         let in_check = self.board.in_check();
-        let stand_pat = if in_check {
-            -INFINITY
-        } else {
-            self.corrected(self.evaluate())
-        };
+        let raw_eval = (!in_check).then(|| {
+            entry
+                .and_then(|e| e.eval)
+                .unwrap_or_else(|| self.evaluate())
+        });
+        let stand_pat = raw_eval.map_or(-INFINITY, |raw| self.corrected(raw));
         if stand_pat >= beta {
             return stand_pat;
         }
@@ -468,6 +477,7 @@ impl Searcher<'_> {
             score: score_to_tt(best, ply),
             depth: 0,
             bound,
+            eval: raw_eval,
         });
         best
     }

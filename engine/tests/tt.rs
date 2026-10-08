@@ -9,6 +9,7 @@ fn entry(key: u64, score: i32) -> Entry {
         score,
         depth: 3,
         bound: Bound::Exact,
+        eval: Some(-25),
     }
 }
 
@@ -81,12 +82,15 @@ fn entries_roundtrip() {
         ] {
             for (depth, bound) in [(0, Bound::Exact), (1, Bound::Lower), (255, Bound::Upper)] {
                 key = key.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(1);
+                let eval =
+                    [None, Some(0), Some(-1234), Some(i32::from(i16::MAX))][depth as usize % 4];
                 let e = Entry {
                     key,
                     best,
                     score,
                     depth,
                     bound,
+                    eval,
                 };
                 tt.store(e);
                 assert_eq!(tt.probe(key), Some(e));
@@ -107,6 +111,7 @@ fn entry_for(key: u64) -> Entry {
         score: (key >> 40) as i16 as i32,
         depth: (key >> 8) as u8,
         bound: [Bound::Exact, Bound::Lower, Bound::Upper][(key % 3) as usize],
+        eval: Some((key >> 24) as i16 as i32).filter(|&e| e != i32::from(i16::MIN)),
     }
 }
 

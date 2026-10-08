@@ -24,6 +24,9 @@ pub struct Entry {
     pub score: i32,
     pub depth: u8,
     pub bound: Bound,
+    /// The node's static evaluation before correction, if known and within `i16` (except
+    /// `i16::MIN`); stored so that it need not be computed again.
+    pub eval: Option<i32>,
 }
 
 /// Search results by Zobrist hash, shared by search threads without locks; a new entry always
@@ -89,7 +92,8 @@ impl TranspositionTable {
     }
 }
 
-/// Bits 0..16 move (0 for none), 16..32 score, 32..40 depth, 40..42 bound (0 for an empty slot).
+/// Bits 0..16 move (0 for none), 16..32 score, 32..40 depth, 40..42 bound (0 for an empty slot),
+/// 42..58 static evaluation (`i16::MIN` for none).
 fn pack(entry: &Entry) -> u64 {
     debug_assert!(i16::try_from(entry.score).is_ok(), "{}", entry.score);
     let bound = match entry.bound {
@@ -101,6 +105,12 @@ fn pack(entry: &Entry) -> u64 {
         | u64::from(entry.score as i16 as u16) << 16
         | u64::from(entry.depth) << 32
         | bound << 40
+        | u64::from(
+            entry
+                .eval
+                .and_then(|e| i16::try_from(e).ok())
+                .unwrap_or(i16::MIN) as u16,
+        ) << 42
 }
 
 fn unpack(key: u64, data: u64) -> Option<Entry> {
@@ -120,6 +130,7 @@ fn unpack(key: u64, data: u64) -> Option<Entry> {
         score: i32::from((data >> 16) as u16 as i16),
         depth: (data >> 32) as u8,
         bound,
+        eval: Some(i32::from((data >> 42) as u16 as i16)).filter(|&e| e != i32::from(i16::MIN)),
     })
 }
 
