@@ -75,7 +75,8 @@ impl Searcher<'_> {
         }
 
         let pv = beta - alpha > 1;
-        let static_eval = (!in_check && depth > 0).then(|| self.evaluate());
+        let raw_eval = (!in_check && depth > 0).then(|| self.evaluate());
+        let static_eval = raw_eval.map(|raw| self.corrected(raw));
         self.static_evals[ply as usize] = static_eval;
         let improving = ply >= 2
             && static_eval.is_some_and(|eval| {
@@ -216,6 +217,14 @@ impl Searcher<'_> {
                 s if s >= beta => Bound::Lower,
                 _ => Bound::Exact,
             };
+            if let (Some(raw), Some(eval)) = (raw_eval, static_eval)
+                && best_move.is_some_and(|mv| move_order_key(self.board, mv) == 0)
+                && best.abs() < MATE - MAX_DEPTH as i32
+                && !(bound == Bound::Lower && best <= eval)
+                && !(bound == Bound::Upper && best >= eval)
+            {
+                self.update_correction(raw, best, depth);
+            }
             self.tt.store(Entry {
                 key,
                 best: best_move,
@@ -288,7 +297,7 @@ impl Searcher<'_> {
             }
         }
         let original_alpha = alpha;
-        let stand_pat = self.evaluate();
+        let stand_pat = self.corrected(self.evaluate());
         if stand_pat >= beta {
             return stand_pat;
         }

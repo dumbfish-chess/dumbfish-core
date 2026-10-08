@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use dumbfish_core::{Board, Move, MoveKind, MoveList, PieceKind, Square};
+use dumbfish_core::{Board, Color, Move, MoveKind, MoveList, PieceKind, Square};
 
 use crate::eval;
 use crate::see::{piece_value, see};
@@ -22,6 +22,11 @@ const INFINITY: i32 = 32_000;
 pub const MATE: i32 = 31_000;
 /// A tablebase win `ply` plies from the root scores `TB_WIN - ply`, below any mate.
 pub const TB_WIN: i32 = 30_000;
+/// Pawn structures per side in the correction history.
+const CORRECTION_SIZE: usize = 1 << 14;
+/// The correction history counts in this fraction of a centipawn.
+const CORRECTION_GRAIN: i32 = 256;
+const MAX_CORRECTION: i32 = 64 * CORRECTION_GRAIN;
 
 #[derive(Default)]
 pub struct Limits {
@@ -328,6 +333,9 @@ struct Searcher<'a> {
     excluded: [Option<Move>; MAX_PLY + 1],
     /// The static evaluation at each ply of the current line; `None` in check.
     static_evals: [Option<i32>; MAX_PLY + 1],
+    /// How far searches from each pawn structure, by side to move, ended up from the static
+    /// evaluation, in `CORRECTION_GRAIN` units; added to the evaluation.
+    correction: Box<[[i32; CORRECTION_SIZE]; 2]>,
     /// The quiet move that last refuted a move, by the piece that made it and its target square.
     countermoves: Box<[[Option<Move>; 64]; 12]>,
     /// Endgame tables to take results from, after captures and pawn moves.
@@ -373,6 +381,7 @@ impl<'a> Searcher<'a> {
             played: [None; MAX_PLY + 1],
             excluded: [None; MAX_PLY + 1],
             static_evals: [None; MAX_PLY + 1],
+            correction: Box::new([[0; CORRECTION_SIZE]; 2]),
             countermoves: Box::new([[None; 64]; 12]),
             tablebases,
             on_root_move: None,
@@ -416,6 +425,31 @@ impl<'a> Searcher<'a> {
 
     fn evaluate(&self) -> i32 {
         eval::evaluate_styled(self.board, &self.limits.style)
+    }
+
+    /// The side to move and its pawn structure's slot in `correction`.
+    fn correction_slot(&self) -> (usize, usize) {
+        let pawns = |color| self.board.pieces(color, PieceKind::Pawn).0;
+        let key = pawns(Color::White).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            ^ pawns(Color::Black).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+        let slot = (key >> (64 - CORRECTION_SIZE.trailing_zeros())) as usize;
+        (self.board.side_to_move().index(), slot)
+    }
+
+    /// The static evaluation `raw` plus the correction of the pawn structure.
+    fn corrected(&self, raw: i32) -> i32 {
+        let (side, slot) = self.correction_slot();
+        raw + self.correction[side][slot] / CORRECTION_GRAIN
+    }
+
+    /// Moves the correction of the pawn structure towards `score - raw`, the more the deeper
+    /// the search that found `score`.
+    fn update_correction(&mut self, raw: i32, score: i32, depth: u32) {
+        let (side, slot) = self.correction_slot();
+        let weight = (depth as i32 + 1).min(16);
+        let entry = &mut self.correction[side][slot];
+        *entry = ((*entry * (256 - weight) + (score - raw) * CORRECTION_GRAIN * weight) / 256)
+            .clamp(-MAX_CORRECTION, MAX_CORRECTION);
     }
 
     /// A draw costs the side to move at the root `contempt`, and gains its opponent as much.

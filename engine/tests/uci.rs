@@ -729,8 +729,8 @@ fn clear_hash_and_engine_about() {
             "{option}: {lines:?}"
         );
     }
-    let hashfull = |engine: &mut Engine, depth: u32| -> u32 {
-        engine.send(&format!("go depth {depth}"));
+    let hashfull = |engine: &mut Engine, nodes: u32| -> u32 {
+        engine.send(&format!("go nodes {nodes}"));
         let lines = engine.read_until("bestmove");
         let info = lines
             .iter()
@@ -746,10 +746,14 @@ fn clear_hash_and_engine_about() {
             .parse()
             .unwrap()
     };
+    engine.send("setoption name Hash value 1");
     engine.send("position startpos");
-    assert!(hashfull(&mut engine, 7) > 0, "a search fills the table");
+    assert!(
+        hashfull(&mut engine, 20_000) > 0,
+        "a search fills the table"
+    );
     engine.send("setoption name Clear Hash");
-    assert_eq!(hashfull(&mut engine, 1), 0, "Clear Hash empties it");
+    assert_eq!(hashfull(&mut engine, 50), 0, "Clear Hash empties it");
 }
 
 #[test]
