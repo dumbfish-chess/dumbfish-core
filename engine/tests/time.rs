@@ -55,3 +55,14 @@ fn deadlines() {
     assert!(!deadline.is_set() && !deadline.passed());
     assert!(Deadline::at(Instant::now()).passed());
 }
+
+#[test]
+fn deadline_reports_its_moment() {
+    let deadline = Deadline::default();
+    assert_eq!(deadline.get(), None, "unset");
+    let moment = Instant::now() + Duration::from_secs(5);
+    deadline.set(Some(moment));
+    let got = deadline.get().unwrap();
+    let error = got.max(moment) - got.min(moment);
+    assert!(error < Duration::from_micros(1), "{error:?}");
+}

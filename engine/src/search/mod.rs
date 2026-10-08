@@ -22,6 +22,10 @@ const INFINITY: i32 = 32_000;
 pub const MATE: i32 = 31_000;
 /// A tablebase win `ply` plies from the root scores `TB_WIN - ply`, below any mate.
 pub const TB_WIN: i32 = 30_000;
+/// The share of the soft time limit to use after the best move stayed the same for 0, 1, 2,
+/// 3, 4 or more iterations.
+const STABILITY: [f64; 5] = [2.5, 1.2, 0.9, 0.8, 0.75];
+
 /// Pawn structures per side in the correction history.
 const CORRECTION_SIZE: usize = 1 << 14;
 /// The correction history counts in this fraction of a centipawn.
@@ -36,8 +40,12 @@ pub struct Limits {
     pub mate: Option<u32>,
     /// The search stops here.
     pub deadline: Deadline,
-    /// No new iteration starts after this.
+    /// No new iteration starts after this, as stretched or shrunk by the search: see
+    /// `STABILITY`.
     pub soft_deadline: Deadline,
+    /// When the clock behind `soft_deadline` started: at `go`, or at `ponderhit`; if unset, the
+    /// soft deadline is not stretched or shrunk.
+    pub clock_start: Deadline,
     /// Root moves to choose from; all legal moves if empty.
     pub searchmoves: Vec<Move>,
     /// Below `MAX_LEVEL`, adds the skill's node budget and picks the move with its noise; the
@@ -208,9 +216,16 @@ fn main_search(
     let mut best = moves.first().copied();
     let lines = searcher.limits.multipv.clamp(1, moves.len().max(1));
     let mut scores: Vec<(Move, i32)> = Vec::new();
+    let (mut stable, mut previous, mut share) = (0, None, 1.0);
     for depth in 1..=max_depth {
-        if depth > 1 && searcher.limits.soft_deadline.passed() {
-            break;
+        let limits = searcher.limits;
+        if let Some(soft) = limits.soft_deadline.get()
+            && depth > 1
+        {
+            let clock = limits.clock_start.get().unwrap_or(soft);
+            if Instant::now() >= clock + soft.saturating_duration_since(clock).mul_f64(share) {
+                break;
+            }
         }
         let mut found = Vec::new();
         if skill.is_some() {
@@ -247,6 +262,20 @@ fn main_search(
             break;
         };
         best = Some(mv);
+        stable = match previous {
+            Some((m, _)) if m == mv => stable + 1,
+            _ => 0,
+        };
+        let drop = previous.map_or(0, |(_, score)| score - top);
+        share = STABILITY[stable.min(4)]
+            * if drop > 50 {
+                1.5
+            } else if drop > 25 {
+                1.25
+            } else {
+                1.0
+            };
+        previous = Some((mv, top));
         for &(mv, _, _) in found.iter().rev() {
             put_first(&mut moves, mv);
         }

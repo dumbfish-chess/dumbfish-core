@@ -51,6 +51,11 @@ impl Deadline {
         self.0.store(nanos, Ordering::Relaxed);
     }
 
+    pub fn get(&self) -> Option<Instant> {
+        let nanos = self.0.load(Ordering::Relaxed);
+        (nanos != UNSET).then(|| *ORIGIN + Duration::from_nanos(nanos))
+    }
+
     pub fn is_set(&self) -> bool {
         self.0.load(Ordering::Relaxed) != UNSET
     }

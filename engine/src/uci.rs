@@ -460,6 +460,7 @@ struct Budget {
 impl Budget {
     fn apply(self, limits: &Limits, from: Instant) {
         limits.soft_deadline.set(self.soft.map(|soft| from + soft));
+        limits.clock_start.set(Some(from));
         limits.deadline.set(Some(from + self.hard));
     }
 }
