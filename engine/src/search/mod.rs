@@ -63,7 +63,16 @@ pub struct Iteration {
     /// The principal variation, starting with `best`.
     pub pv: Vec<Move>,
     pub nodes: u64,
+    /// Successful tablebase probes in the search, by all threads.
+    pub tb_hits: u64,
     pub elapsed: Duration,
+}
+
+/// Counters shared by the search threads.
+#[derive(Default)]
+struct Counters {
+    nodes: AtomicU64,
+    tb_hits: AtomicU64,
 }
 
 /// Iterative deepening until a limit is hit or `stop` is set. Returns the best move of the
@@ -78,7 +87,20 @@ pub fn search(
     limits: &Limits,
     stop: &AtomicBool,
     tt: &TranspositionTable,
+    on_iteration: impl FnMut(&Iteration),
+) -> (Option<Move>, u64) {
+    search_reporting(board, limits, stop, tt, on_iteration, |_, _, _| {})
+}
+
+/// `search` that also calls `on_root_move(depth, move, number from 1)` as the main thread starts
+/// on each root move.
+pub fn search_reporting(
+    board: &mut Board,
+    limits: &Limits,
+    stop: &AtomicBool,
+    tt: &TranspositionTable,
     mut on_iteration: impl FnMut(&Iteration),
+    mut on_root_move: impl FnMut(u32, Move, usize),
 ) -> (Option<Move>, u64) {
     let start = Instant::now();
     let skill = limits.skill.filter(|s| s.level < MAX_LEVEL);
@@ -89,7 +111,7 @@ pub fn search(
     };
     let max_depth = limits.depth.unwrap_or(MAX_DEPTH).min(MAX_DEPTH);
     let finished = AtomicBool::new(false);
-    let total_nodes = AtomicU64::new(0);
+    let counters = Counters::default();
     let mut moves = root_moves(board, limits);
     let tablebases = limits.tablebases.as_deref().filter(|_| skill.is_none());
     let tb_root = tablebases.and_then(|tb| tb.rank_root(board, &moves));
@@ -102,7 +124,7 @@ pub fn search(
         for helper in 1..threads {
             let mut board = board.clone();
             let mut moves: MoveList = moves.iter().copied().collect();
-            let (finished, total_nodes) = (&finished, &total_nodes);
+            let (finished, counters) = (&finished, &counters);
             scope.spawn(move || {
                 let mut searcher = Searcher::new(
                     &mut board,
@@ -110,7 +132,7 @@ pub fn search(
                     None,
                     [stop, finished],
                     tt,
-                    total_nodes,
+                    counters,
                     in_search,
                 );
                 for depth in (1 + helper % 2) as u32..=max_depth {
@@ -127,15 +149,16 @@ pub fn search(
             .into_iter()
             .flatten()
             .min();
-        let searcher = Searcher::new(
+        let mut searcher = Searcher::new(
             board,
             limits,
             node_limit,
             [stop, &finished],
             tt,
-            &total_nodes,
+            &counters,
             in_search,
         );
+        searcher.on_root_move = Some(&mut on_root_move);
         let best = main_search(
             searcher,
             moves,
@@ -148,8 +171,8 @@ pub fn search(
         finished.store(true, Ordering::Relaxed);
         best
     })
-    .map_or((None, total_nodes.load(Ordering::Relaxed)), |best| {
-        (Some(best), total_nodes.load(Ordering::Relaxed))
+    .map_or((None, counters.nodes.load(Ordering::Relaxed)), |best| {
+        (Some(best), counters.nodes.load(Ordering::Relaxed))
     })
 }
 
@@ -231,8 +254,9 @@ fn main_search(
                 score: reported(tb, score),
                 best: mv,
                 pv,
-                nodes: searcher.total_nodes.load(Ordering::Relaxed) + searcher.nodes
+                nodes: searcher.counters.nodes.load(Ordering::Relaxed) + searcher.nodes
                     - searcher.flushed,
+                tb_hits: searcher.counters.tb_hits.load(Ordering::Relaxed),
                 elapsed: start.elapsed(),
             });
         }
@@ -282,9 +306,9 @@ struct Searcher<'a> {
     stops: [&'a AtomicBool; 2],
     tt: &'a TranspositionTable,
     nodes: u64,
-    /// Nodes already added to `total_nodes`.
+    /// Nodes already added to `counters`.
     flushed: u64,
-    total_nodes: &'a AtomicU64,
+    counters: &'a Counters,
     aborted: bool,
     /// Two quiet moves per ply that caused beta cutoffs, most recent first.
     killers: [[Option<Move>; 2]; MAX_PLY],
@@ -306,6 +330,8 @@ struct Searcher<'a> {
     countermoves: Box<[[Option<Move>; 64]; 12]>,
     /// Endgame tables to take results from, after captures and pawn moves.
     tablebases: Option<&'a Tablebases>,
+    /// See `search_reporting`; only for the main thread.
+    on_root_move: Option<&'a mut dyn FnMut(u32, Move, usize)>,
 }
 
 mod alphabeta;
@@ -321,7 +347,7 @@ impl<'a> Searcher<'a> {
         node_limit: Option<u64>,
         stops: [&'a AtomicBool; 2],
         tt: &'a TranspositionTable,
-        total_nodes: &'a AtomicU64,
+        counters: &'a Counters,
         tablebases: Option<&'a Tablebases>,
     ) -> Self {
         Self {
@@ -332,7 +358,7 @@ impl<'a> Searcher<'a> {
             tt,
             nodes: 0,
             flushed: 0,
-            total_nodes,
+            counters,
             aborted: false,
             killers: [[None; 2]; MAX_PLY],
             history: Box::new([[[0; 64]; 64]; 2]),
@@ -346,11 +372,13 @@ impl<'a> Searcher<'a> {
             excluded: [None; MAX_PLY + 1],
             countermoves: Box::new([[None; 64]; 12]),
             tablebases,
+            on_root_move: None,
         }
     }
 
     fn flush_nodes(&mut self) {
-        self.total_nodes
+        self.counters
+            .nodes
             .fetch_add(self.nodes - self.flushed, Ordering::Relaxed);
         self.flushed = self.nodes;
     }

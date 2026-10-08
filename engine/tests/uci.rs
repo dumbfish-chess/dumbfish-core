@@ -686,3 +686,24 @@ fn go_mate_stops_at_the_mate() {
         "no deeper search once the mate is found: {lines:?}"
     );
 }
+
+#[test]
+fn reports_root_moves_on_long_searches() {
+    let mut engine = Engine::start();
+    engine.send("position startpos");
+    engine.send("go movetime 3500");
+    let lines = engine.read_until("bestmove");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains(" currmove ") && l.contains(" currmovenumber ")),
+        "after 3 seconds the root moves are reported: {lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .filter(|l| l.contains(" pv "))
+            .all(|l| l.contains(" tbhits 0 ")),
+        "{lines:?}"
+    );
+}

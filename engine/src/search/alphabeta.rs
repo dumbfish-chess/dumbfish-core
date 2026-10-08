@@ -43,6 +43,7 @@ impl Searcher<'_> {
             && self.board.halfmove_clock() == 0
             && let Some(wdl) = tb.probe_wdl(self.board)
         {
+            self.counters.tb_hits.fetch_add(1, Ordering::Relaxed);
             let (score, bound) = match wdl {
                 2 => (TB_WIN - ply, Bound::Lower),
                 -2 => (ply - TB_WIN, Bound::Upper),

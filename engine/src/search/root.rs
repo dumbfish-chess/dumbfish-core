@@ -43,6 +43,9 @@ impl Searcher<'_> {
         self.nodes += 1;
         let mut best: Option<(Move, i32)> = None;
         for (i, &mv) in moves.iter().enumerate() {
+            if let Some(report) = &mut self.on_root_move {
+                report(depth, mv, i + 1);
+            }
             self.played[0] = Some(mv);
             self.board.make_move(mv);
             let score = self.principal_variation(i == 0, depth - 1, 1, alpha, beta);
@@ -69,7 +72,10 @@ impl Searcher<'_> {
     pub(super) fn root_scores(&mut self, depth: u32, moves: &MoveList) -> Option<Vec<(Move, i32)>> {
         self.nodes += 1;
         let mut scores = Vec::with_capacity(moves.len());
-        for &mv in moves {
+        for (i, &mv) in moves.iter().enumerate() {
+            if let Some(report) = &mut self.on_root_move {
+                report(depth, mv, i + 1);
+            }
             self.played[0] = Some(mv);
             self.board.make_move(mv);
             let score = -self.negamax(depth - 1, 1, -INFINITY, INFINITY);

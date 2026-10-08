@@ -33,6 +33,8 @@ const COMMANDS: [&str; 12] = [
     "eval",
 ];
 const MAX_MULTIPV: usize = 256;
+/// The search reports the root move it is on only after this long, not to flood the GUI.
+const CURRMOVE_AFTER: Duration = Duration::from_secs(3);
 
 /// Reads UCI commands from stdin until `quit` or end of input.
 pub fn run() {
@@ -311,12 +313,23 @@ impl Engine {
         let tt = self.tt.take().expect("no search is running");
         self.worker = Some(thread::spawn(move || {
             let mut line = Vec::new();
-            let (best, _) = search::search(&mut board, &limits, &stop, &tt, |it| {
-                print_info(it, show_wdl);
-                if it.multipv == 1 {
-                    line.clone_from(&it.pv);
-                }
-            });
+            let (best, _) = search::search_reporting(
+                &mut board,
+                &limits,
+                &stop,
+                &tt,
+                |it| {
+                    print_info(it, show_wdl);
+                    if it.multipv == 1 {
+                        line.clone_from(&it.pv);
+                    }
+                },
+                |depth, mv, number| {
+                    if start.elapsed() >= CURRMOVE_AFTER {
+                        println!("info depth {depth} currmove {mv} currmovenumber {number}");
+                    }
+                },
+            );
             while (infinite || pondering.load(Ordering::Relaxed)) && !stop.load(Ordering::Relaxed) {
                 thread::sleep(Duration::from_millis(5));
             }
@@ -485,12 +498,14 @@ fn print_info(it: &Iteration, show_wdl: bool) {
     };
     let pv: Vec<_> = it.pv.iter().map(|m| m.to_string()).collect();
     println!(
-        "info depth {} seldepth {} multipv {} score {score} nodes {} nps {nps} hashfull {} time {} pv {}",
+        "info depth {} seldepth {} multipv {} score {score} nodes {} nps {nps} hashfull {} tbhits {} \
+         time {} pv {}",
         it.depth,
         it.seldepth,
         it.multipv,
         it.nodes,
         it.hashfull,
+        it.tb_hits,
         it.elapsed.as_millis(),
         pv.join(" ")
     );
