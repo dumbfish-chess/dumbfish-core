@@ -86,14 +86,18 @@ impl Searcher<'_> {
             return eval;
         }
 
-        if depth >= 3
+        if let Some(eval) = static_eval
+            && !pv
+            && depth >= 3
+            && eval >= beta
             && excluded.is_none()
+            && self.played[ply as usize - 1].is_some()
             && self.has_pieces()
-            && static_eval.is_some_and(|eval| eval >= beta)
         {
+            let reduction = 4 + depth / 6 + ((eval - beta) / 200).min(3) as u32;
             self.played[ply as usize] = None;
             self.board.make_null_move();
-            let score = -self.negamax(depth - 3, ply + 1, -beta, -beta + 1);
+            let score = -self.negamax(depth.saturating_sub(reduction), ply + 1, -beta, -beta + 1);
             self.board.unmake_null_move();
             if self.aborted {
                 return 0;
