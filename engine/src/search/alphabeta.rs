@@ -183,13 +183,21 @@ impl Searcher<'_> {
             return self.quiescence(ply, alpha, beta);
         }
         let tt_move = entry.and_then(|e| e.best);
-        self.order(&mut moves, tt_move, ply);
+        let tt_first = tt_move.filter(|mv| moves.contains(mv));
+        if let Some(mv) = tt_first {
+            put_first(&mut moves, mv);
+        }
+        let sort_from = usize::from(tt_first.is_some());
 
         let original_alpha = alpha;
         let (mut best, mut best_move) = (-INFINITY, None);
         let mut quiets_tried = MoveList::default();
         let mut captures_tried = MoveList::default();
-        for (i, &mv) in moves.iter().enumerate() {
+        for i in 0..moves.len() {
+            if i == sort_from {
+                self.order(&mut moves[i..], ply);
+            }
+            let mv = moves[i];
             if Some(mv) == excluded {
                 continue;
             }

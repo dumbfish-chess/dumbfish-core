@@ -51,17 +51,17 @@ pub(super) fn move_order_key(board: &Board, mv: Move) -> i32 {
 }
 
 impl Searcher<'_> {
-    /// The move from the transposition table first, then captures and promotions that do not
-    /// lose material by `move_order_key` and capture history, then the killer moves of this ply
-    /// and the countermove to the last move, then the other quiet moves by history and
-    /// continuation history, and the captures that lose material last.
-    pub(super) fn order(&self, moves: &mut [Move], tt_move: Option<Move>, ply: i32) {
+    /// Captures and promotions that do not lose material first, by `move_order_key` and capture
+    /// history, then the killer moves of this ply and the countermove to the last move, then
+    /// the other quiet moves by history and continuation history, and the captures that lose
+    /// material last. The move from the transposition table goes before all of them, tried
+    /// before the others are ordered.
+    pub(super) fn order(&self, moves: &mut [Move], ply: i32) {
         let killers = self.killers[ply as usize];
         let previous = self.countermove_slot(ply);
         let countermove = previous.and_then(|(piece, to)| self.tables.countermoves[piece][to]);
         moves.sort_by_cached_key(|&mv| {
             Reverse(match move_order_key(self.board, mv) {
-                _ if Some(mv) == tt_move => i32::MAX,
                 tactical if tactical > 0 => {
                     let history =
                         capture_index(self.board, mv).map_or(0, |i| self.tables.capture_history[i]);
