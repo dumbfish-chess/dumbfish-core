@@ -6,6 +6,14 @@ use super::*;
 /// more cannot raise the score to alpha.
 const DELTA_MARGIN: i32 = 200;
 
+/// What the singular extension search found about the move from the transposition table.
+enum Singular {
+    /// Search the move this many plies deeper; shallower if negative.
+    Extend(i32),
+    /// Other moves reach beta too: the node fails high with this score.
+    Cut(i32),
+}
+
 /// ProbCut cuts a node when a capture beats beta by this much in a shallower search.
 const PROBCUT_MARGIN: i32 = 200;
 
@@ -176,15 +184,20 @@ impl Searcher<'_> {
             if Some(mv) == excluded {
                 continue;
             }
-            let extension = match entry {
+            let singular = match entry {
                 Some(e) if i == 0 && Some(mv) == tt_move && excluded.is_none() => {
-                    self.singular_extension(e, depth, ply)
+                    Some(self.singular(e, depth, ply, beta, pv))
                 }
-                _ => 0,
+                _ => None,
             };
             if self.aborted {
                 return 0;
             }
+            let extension = match singular {
+                Some(Singular::Cut(score)) => return score,
+                Some(Singular::Extend(plies)) => plies,
+                None => 0,
+            };
             let quiet = move_order_key(self.board, mv) == 0;
             let history = if quiet {
                 self.quiet_history(mv, ply)
@@ -229,7 +242,8 @@ impl Searcher<'_> {
                     score
                 }
             } else {
-                self.principal_variation(i == 0, depth - 1 + extension, ply + 1, alpha, beta)
+                let depth = (depth as i32 - 1 + extension) as u32;
+                self.principal_variation(i == 0, depth, ply + 1, alpha, beta)
             };
             self.board.unmake_move();
             if self.aborted {
@@ -320,9 +334,11 @@ impl Searcher<'_> {
         None
     }
 
-    /// One more ply for the move from the transposition table `entry` if a reduced search of
-    /// every other move stays clearly below its score.
-    fn singular_extension(&mut self, entry: Entry, depth: u32, ply: i32) -> u32 {
+    /// Searches every move but the one from the transposition table `entry`, reduced, against
+    /// a bound clearly below its score. If they all stay below, the move is singular and gets
+    /// one more ply; if they reach beta as well, the node fails high (multi-cut); if only the
+    /// table's score is above beta, the move gets one ply less outside PV nodes.
+    fn singular(&mut self, entry: Entry, depth: u32, ply: i32, beta: i32, pv: bool) -> Singular {
         let tt_score = score_from_tt(entry.score, ply);
         if depth < 6
             || entry.bound == Bound::Upper
@@ -330,14 +346,22 @@ impl Searcher<'_> {
             || tt_score.abs() >= MATE - MAX_DEPTH as i32
             || ply as u32 + depth >= MAX_DEPTH
         {
-            return 0;
+            return Singular::Extend(0);
         }
         let singular_beta = tt_score - 2 * depth as i32;
         self.excluded[ply as usize] = entry.best;
         let score = self.negamax((depth - 1) / 2, ply, singular_beta - 1, singular_beta);
         self.excluded[ply as usize] = None;
         self.pv_len[ply as usize] = 0;
-        u32::from(score < singular_beta)
+        if score < singular_beta {
+            Singular::Extend(1)
+        } else if singular_beta >= beta {
+            Singular::Cut(singular_beta)
+        } else if tt_score >= beta && !pv {
+            Singular::Extend(-1)
+        } else {
+            Singular::Extend(0)
+        }
     }
 
     /// Score of the move just made, for the side that made it. The first move gets the full
