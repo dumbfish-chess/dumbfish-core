@@ -326,6 +326,8 @@ struct Searcher<'a> {
     played: [Option<Move>; MAX_PLY + 1],
     /// A move to leave out at each ply, for the singular extension search.
     excluded: [Option<Move>; MAX_PLY + 1],
+    /// The static evaluation at each ply of the current line; `None` in check.
+    static_evals: [Option<i32>; MAX_PLY + 1],
     /// The quiet move that last refuted a move, by the piece that made it and its target square.
     countermoves: Box<[[Option<Move>; 64]; 12]>,
     /// Endgame tables to take results from, after captures and pawn moves.
@@ -370,6 +372,7 @@ impl<'a> Searcher<'a> {
             seldepth: 0,
             played: [None; MAX_PLY + 1],
             excluded: [None; MAX_PLY + 1],
+            static_evals: [None; MAX_PLY + 1],
             countermoves: Box::new([[None; 64]; 12]),
             tablebases,
             on_root_move: None,

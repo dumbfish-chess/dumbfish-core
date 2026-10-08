@@ -76,12 +76,17 @@ impl Searcher<'_> {
 
         let pv = beta - alpha > 1;
         let static_eval = (!in_check && depth > 0).then(|| self.evaluate());
+        self.static_evals[ply as usize] = static_eval;
+        let improving = ply >= 2
+            && static_eval.is_some_and(|eval| {
+                self.static_evals[ply as usize - 2].is_some_and(|before| eval > before)
+            });
         if let Some(eval) = static_eval
             && !pv
             && excluded.is_none()
             && depth <= 6
             && beta.abs() < MATE - MAX_DEPTH as i32
-            && eval - 80 * depth as i32 >= beta
+            && eval - 80 * (depth - u32::from(improving)) as i32 >= beta
         {
             return eval;
         }
@@ -151,15 +156,18 @@ impl Searcher<'_> {
             let futile = !pv
                 && depth <= 3
                 && static_eval.is_some_and(|eval| eval + 100 + 100 * depth as i32 <= alpha);
-            let late_quiet =
-                !pv && !in_check && depth <= 3 && quiets_tried.len() as u32 >= 3 + depth * depth;
+            let late_quiet = !pv
+                && !in_check
+                && depth <= 3
+                && quiets_tried.len() as u32 >= (3 + depth * depth) / (2 - u32::from(improving));
             if (futile || late_quiet) && i > 0 && quiet && !gives_check {
                 self.board.unmake_move();
                 continue;
             }
             let late = i >= 3 && depth >= 3 && quiet && !in_check && !gives_check;
             let score = if late {
-                let reduced = (depth - 1).saturating_sub(reduction(depth, i + 1));
+                let reduction = reduction(depth, i + 1) + u32::from(!improving);
+                let reduced = (depth - 1).saturating_sub(reduction);
                 let score = -self.negamax(reduced, ply + 1, -alpha - 1, -alpha);
                 if score > alpha && !self.aborted {
                     self.principal_variation(false, depth - 1, ply + 1, alpha, beta)
