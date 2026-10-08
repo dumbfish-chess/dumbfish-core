@@ -58,13 +58,13 @@ impl Searcher<'_> {
     pub(super) fn order(&self, moves: &mut [Move], tt_move: Option<Move>, ply: i32) {
         let killers = self.killers[ply as usize];
         let previous = self.countermove_slot(ply);
-        let countermove = previous.and_then(|(piece, to)| self.countermoves[piece][to]);
+        let countermove = previous.and_then(|(piece, to)| self.tables.countermoves[piece][to]);
         moves.sort_by_key(|&mv| {
             Reverse(match move_order_key(self.board, mv) {
                 _ if Some(mv) == tt_move => i32::MAX,
                 tactical if tactical > 0 => {
                     let history =
-                        capture_index(self.board, mv).map_or(0, |i| self.capture_history[i]);
+                        capture_index(self.board, mv).map_or(0, |i| self.tables.capture_history[i]);
                     let key = 1024 * tactical + history;
                     if see(self.board, mv) >= 0 {
                         1_000_000 + key
@@ -83,10 +83,10 @@ impl Searcher<'_> {
     /// History plus continuation history of the quiet move `mv` at `ply`, within
     /// `-2 * MAX_HISTORY..=2 * MAX_HISTORY`.
     pub(super) fn quiet_history(&self, mv: Move, ply: i32) -> i32 {
-        let history = &self.history[self.board.side_to_move().index()];
+        let history = &self.tables.history[self.board.side_to_move().index()];
         history[mv.from().index()][mv.to().index()]
             + self.countermove_slot(ply).map_or(0, |p| {
-                self.continuation[continuation_index(self.board, p, mv)]
+                self.tables.continuation[continuation_index(self.board, p, mv)]
             })
     }
 
@@ -97,8 +97,8 @@ impl Searcher<'_> {
     pub(super) fn update_history(&mut self, cutoff: Move, tried: &[Move], depth: u32, ply: i32) {
         let bonus = history_bonus(depth);
         let previous = self.countermove_slot(ply);
-        let history = &mut self.history[self.board.side_to_move().index()];
-        let continuation = &mut self.continuation;
+        let history = &mut self.tables.history[self.board.side_to_move().index()];
+        let continuation = &mut self.tables.continuation;
         let board = &*self.board;
         let mut update = |mv: Move, bonus: i32| {
             let h = &mut history[mv.from().index()][mv.to().index()];
@@ -124,7 +124,7 @@ impl Searcher<'_> {
     ) {
         let bonus = history_bonus(depth);
         let board = &*self.board;
-        let table = &mut self.capture_history;
+        let table = &mut self.tables.capture_history;
         let mut update = |mv: Move, bonus: i32| {
             if let Some(i) = capture_index(board, mv) {
                 let h = &mut table[i];

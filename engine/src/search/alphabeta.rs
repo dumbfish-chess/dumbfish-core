@@ -263,7 +263,7 @@ impl Searcher<'_> {
                 if quiet {
                     self.remember_killer(mv, ply);
                     if let Some(slot) = self.countermove_slot(ply) {
-                        self.countermoves[slot.0][slot.1] = Some(mv);
+                        self.tables.countermoves[slot.0][slot.1] = Some(mv);
                     }
                     self.update_history(mv, &quiets_tried, depth, ply);
                 }

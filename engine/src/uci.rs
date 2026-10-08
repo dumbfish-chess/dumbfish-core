@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime};
 use dumbfish_core::{Board, Color, Move, MoveKind};
 
 use crate::eval;
-use crate::search::{self, Iteration, Limits, MATE, MAX_DEPTH};
+use crate::search::{self, Iteration, Limits, MATE, MAX_DEPTH, Tables};
 use crate::skill::{self, Skill};
 use crate::style::{self, GROUPS, PRESETS, Style};
 use crate::syzygy::Tablebases;
@@ -52,6 +52,7 @@ pub fn run() {
         stop: Arc::new(AtomicBool::new(false)),
         pondering: Arc::new(AtomicBool::new(false)),
         ponder: None,
+        tables: Vec::new(),
         worker: None,
     };
 
@@ -121,6 +122,7 @@ pub fn run() {
                 engine.wait();
                 engine.board = Board::startpos();
                 engine.tt().clear();
+                engine.tables.clear();
             }
             Some("position") => {
                 engine.wait();
@@ -174,7 +176,9 @@ struct Engine {
     pondering: Arc<AtomicBool>,
     /// Limits and clock of the pondering search, applied at `ponderhit`.
     ponder: Option<(Arc<Limits>, Option<Budget>)>,
-    worker: Option<JoinHandle<TranspositionTable>>,
+    /// What the search threads learned in this game; moves into the search thread with `tt`.
+    tables: Vec<Tables>,
+    worker: Option<JoinHandle<(TranspositionTable, Vec<Tables>)>>,
 }
 
 impl Engine {
@@ -182,7 +186,8 @@ impl Engine {
     /// that change the position wait for the search instead of stopping it.
     fn wait(&mut self) {
         if let Some(handle) = self.worker.take() {
-            self.tt = Some(handle.join().expect("search thread panicked"));
+            let (tt, tables) = handle.join().expect("search thread panicked");
+            (self.tt, self.tables) = (Some(tt), tables);
         }
         self.ponder = None;
     }
@@ -331,6 +336,7 @@ impl Engine {
         let mut board = self.board.clone();
         let root = self.board.clone();
         let tt = self.tt.take().expect("no search is running");
+        let mut tables = std::mem::take(&mut self.tables);
         self.worker = Some(thread::spawn(move || {
             let write = |mv: Move| uci_move(&root, mv, chess960);
             let mut line = Vec::new();
@@ -339,6 +345,7 @@ impl Engine {
                 &limits,
                 &stop,
                 &tt,
+                &mut tables,
                 |it| {
                     print_info(it, show_wdl, &write);
                     if it.multipv == 1 {
@@ -365,7 +372,7 @@ impl Engine {
                 "bestmove {}{ponder}",
                 best.map_or("0000".to_string(), write)
             );
-            tt
+            (tt, tables)
         }));
     }
 

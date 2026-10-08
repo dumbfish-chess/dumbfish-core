@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use dumbfish::search::{self, Limits, MATE};
+use dumbfish::search::{self, Limits, MATE, Tables};
 use dumbfish::skill::Skill;
 use dumbfish::time::Deadline;
 use dumbfish::tt::TranspositionTable;
@@ -208,4 +208,37 @@ fn iterations_report_seldepth_and_hashfull() {
         assert!(hashfull <= 1000);
     }
     assert!(tt.hashfull() > 0, "the search stored entries");
+}
+
+#[test]
+fn tables_carry_over_between_searches() {
+    let limits = Limits {
+        depth: Some(6),
+        ..Limits::default()
+    };
+    let nodes = |tables: &mut Vec<Tables>| {
+        let mut board = Board::from_fen(KIWIPETE).unwrap();
+        let tt = TranspositionTable::new(1);
+        let stop = AtomicBool::new(false);
+        search::search_reporting(
+            &mut board,
+            &limits,
+            &stop,
+            &tt,
+            tables,
+            |_| {},
+            |_, _, _| {},
+        )
+        .1
+    };
+    let fresh = nodes(&mut Vec::new());
+    assert_eq!(nodes(&mut Vec::new()), fresh, "fresh tables search alike");
+    let mut kept = Vec::new();
+    nodes(&mut kept);
+    assert_eq!(kept.len(), 1, "one table per thread");
+    assert_ne!(
+        nodes(&mut kept),
+        fresh,
+        "what the first search learned orders the second"
+    );
 }

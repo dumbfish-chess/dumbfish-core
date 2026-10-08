@@ -81,6 +81,36 @@ pub struct Iteration {
     pub elapsed: Duration,
 }
 
+/// What a search thread learns about moves and positions; kept from one search to the next
+/// within a game.
+pub struct Tables {
+    /// How often a quiet move, by side, from and to square, caused cutoffs; within
+    /// `-MAX_HISTORY..=MAX_HISTORY`.
+    history: Box<[[[i32; 64]; 64]; 2]>,
+    /// History of a quiet move after a given previous move, see `continuation_index`.
+    continuation: Vec<i32>,
+    /// How often a capture, by moving piece, target square and captured kind, caused cutoffs;
+    /// see `capture_index`.
+    capture_history: Vec<i32>,
+    /// The quiet move that last refuted a move, by the piece that made it and its target square.
+    countermoves: Box<[[Option<Move>; 64]; 12]>,
+    /// How far searches from each pawn structure, by side to move, ended up from the static
+    /// evaluation, in `CORRECTION_GRAIN` units; added to the evaluation.
+    correction: Box<[[i32; CORRECTION_SIZE]; 2]>,
+}
+
+impl Default for Tables {
+    fn default() -> Self {
+        Self {
+            history: Box::new([[[0; 64]; 64]; 2]),
+            continuation: vec![0; 12 * 64 * 12 * 64],
+            capture_history: vec![0; 12 * 64 * 6],
+            countermoves: Box::new([[None; 64]; 12]),
+            correction: Box::new([[0; CORRECTION_SIZE]; 2]),
+        }
+    }
+}
+
 /// Counters shared by the search threads.
 #[derive(Default)]
 struct Counters {
@@ -102,16 +132,26 @@ pub fn search(
     tt: &TranspositionTable,
     on_iteration: impl FnMut(&Iteration),
 ) -> (Option<Move>, u64) {
-    search_reporting(board, limits, stop, tt, on_iteration, |_, _, _| {})
+    search_reporting(
+        board,
+        limits,
+        stop,
+        tt,
+        &mut Vec::new(),
+        on_iteration,
+        |_, _, _| {},
+    )
 }
 
 /// `search` that also calls `on_root_move(depth, move, number from 1)` as the main thread starts
-/// on each root move.
+/// on each root move, and that starts from `tables`, one per thread, created as needed and
+/// left as the search leaves them.
 pub fn search_reporting(
     board: &mut Board,
     limits: &Limits,
     stop: &AtomicBool,
     tt: &TranspositionTable,
+    tables: &mut Vec<Tables>,
     mut on_iteration: impl FnMut(&Iteration),
     mut on_root_move: impl FnMut(u32, Move, usize),
 ) -> (Option<Move>, u64) {
@@ -132,9 +172,11 @@ pub fn search_reporting(
         moves = probe.moves.iter().copied().collect();
     }
     let in_search = tablebases.filter(|_| tb_root.is_none());
+    tables.resize_with(threads, Tables::default);
+    let (main_tables, helper_tables) = tables.split_first_mut().expect("one thread at least");
 
     thread::scope(|scope| {
-        for helper in 1..threads {
+        for (helper, tables) in (1..threads).zip(helper_tables) {
             let mut board = board.clone();
             let mut moves: MoveList = moves.iter().copied().collect();
             let (finished, counters) = (&finished, &counters);
@@ -146,8 +188,9 @@ pub fn search_reporting(
                     [stop, finished],
                     tt,
                     counters,
-                    in_search,
+                    tables,
                 );
+                searcher.tablebases = in_search;
                 for depth in (1 + helper % 2) as u32..=max_depth {
                     let Some((best, _)) = searcher.root(depth, &moves, -INFINITY, INFINITY) else {
                         break;
@@ -169,8 +212,9 @@ pub fn search_reporting(
             [stop, &finished],
             tt,
             &counters,
-            in_search,
+            main_tables,
         );
+        searcher.tablebases = in_search;
         searcher.on_root_move = Some(&mut on_root_move);
         let best = main_search(
             searcher,
@@ -346,14 +390,7 @@ struct Searcher<'a> {
     aborted: bool,
     /// Two quiet moves per ply that caused beta cutoffs, most recent first.
     killers: [[Option<Move>; 2]; MAX_PLY],
-    /// How often a quiet move, by side, from and to square, caused cutoffs; within
-    /// `-MAX_HISTORY..=MAX_HISTORY`.
-    history: Box<[[[i32; 64]; 64]; 2]>,
-    /// History of a quiet move after a given previous move, see `continuation_index`.
-    continuation: Vec<i32>,
-    /// How often a capture, by moving piece, target square and captured kind, caused cutoffs;
-    /// see `capture_index`.
-    capture_history: Vec<i32>,
+    tables: &'a mut Tables,
     /// Triangular table of principal variations: `pv[ply][..pv_len[ply]]` for each ply.
     pv: Box<[[Move; MAX_PLY + 1]; MAX_PLY + 1]>,
     pv_len: [usize; MAX_PLY + 1],
@@ -365,11 +402,6 @@ struct Searcher<'a> {
     excluded: [Option<Move>; MAX_PLY + 1],
     /// The static evaluation at each ply of the current line; `None` in check.
     static_evals: [Option<i32>; MAX_PLY + 1],
-    /// How far searches from each pawn structure, by side to move, ended up from the static
-    /// evaluation, in `CORRECTION_GRAIN` units; added to the evaluation.
-    correction: Box<[[i32; CORRECTION_SIZE]; 2]>,
-    /// The quiet move that last refuted a move, by the piece that made it and its target square.
-    countermoves: Box<[[Option<Move>; 64]; 12]>,
     /// Endgame tables to take results from, after captures and pawn moves.
     tablebases: Option<&'a Tablebases>,
     /// See `search_reporting`; only for the main thread.
@@ -390,7 +422,7 @@ impl<'a> Searcher<'a> {
         stops: [&'a AtomicBool; 2],
         tt: &'a TranspositionTable,
         counters: &'a Counters,
-        tablebases: Option<&'a Tablebases>,
+        tables: &'a mut Tables,
     ) -> Self {
         Self {
             board,
@@ -403,9 +435,7 @@ impl<'a> Searcher<'a> {
             counters,
             aborted: false,
             killers: [[None; 2]; MAX_PLY],
-            history: Box::new([[[0; 64]; 64]; 2]),
-            continuation: vec![0; 12 * 64 * 12 * 64],
-            capture_history: vec![0; 12 * 64 * 6],
+            tables,
             pv: Box::new(
                 [[Move::new(Square::A1, Square::A1, MoveKind::Normal); MAX_PLY + 1]; MAX_PLY + 1],
             ),
@@ -414,9 +444,7 @@ impl<'a> Searcher<'a> {
             played: [None; MAX_PLY + 1],
             excluded: [None; MAX_PLY + 1],
             static_evals: [None; MAX_PLY + 1],
-            correction: Box::new([[0; CORRECTION_SIZE]; 2]),
-            countermoves: Box::new([[None; 64]; 12]),
-            tablebases,
+            tablebases: None,
             on_root_move: None,
         }
     }
@@ -472,7 +500,7 @@ impl<'a> Searcher<'a> {
     /// The static evaluation `raw` plus the correction of the pawn structure.
     fn corrected(&self, raw: i32) -> i32 {
         let (side, slot) = self.correction_slot();
-        raw + self.correction[side][slot] / CORRECTION_GRAIN
+        raw + self.tables.correction[side][slot] / CORRECTION_GRAIN
     }
 
     /// Moves the correction of the pawn structure towards `score - raw`, the more the deeper
@@ -480,7 +508,7 @@ impl<'a> Searcher<'a> {
     fn update_correction(&mut self, raw: i32, score: i32, depth: u32) {
         let (side, slot) = self.correction_slot();
         let weight = (depth as i32 + 1).min(16);
-        let entry = &mut self.correction[side][slot];
+        let entry = &mut self.tables.correction[side][slot];
         *entry = ((*entry * (256 - weight) + (score - raw) * CORRECTION_GRAIN * weight) / 256)
             .clamp(-MAX_CORRECTION, MAX_CORRECTION);
     }
