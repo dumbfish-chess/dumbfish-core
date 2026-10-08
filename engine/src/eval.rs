@@ -93,6 +93,10 @@ pub fn group(index: usize) -> usize {
     }
 }
 
+/// `group` of every feature, by index.
+static GROUP_OF: LazyLock<[u8; FEATURE_COUNT]> =
+    LazyLock::new(|| std::array::from_fn(|index| group(index) as u8));
+
 /// Feature names by index.
 pub static FEATURE_NAMES: LazyLock<Vec<String>> = LazyLock::new(|| {
     let mut names: Vec<_> = PIECE_NAMES[..5].iter().map(|n| n.to_string()).collect();
@@ -464,7 +468,7 @@ fn group_sums(board: &Board, weights: &Weights) -> [i32; GROUPS.len()] {
     let blend = blend(phase(board));
     let mut sums = [0; GROUPS.len()];
     for_each_feature(board, |index, value| {
-        sums[group(index)] += value * dot(blend, &weights[index])
+        sums[usize::from(GROUP_OF[index])] += value * dot(blend, &weights[index])
     });
     sums
 }
