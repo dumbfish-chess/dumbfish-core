@@ -137,7 +137,9 @@ pub fn for_each_feature(board: &Board, mut f: impl FnMut(usize, i32)) {
             f(MATERIAL + kind.index(), value);
         }
     }
-    for (color, sign, mirror) in [(Color::White, 1, 0), (Color::Black, -1, 56)] {
+    let sides = [(Color::White, 1, 0), (Color::Black, -1, 56)];
+    let mut maps = [AttackMaps::default(); 2];
+    for (color, sign, mirror) in sides {
         for kind in PieceKind::ALL {
             for sq in board.pieces(color, kind) {
                 f(
@@ -147,70 +149,79 @@ pub fn for_each_feature(board: &Board, mut f: impl FnMut(usize, i32)) {
             }
         }
         pawn_structure(board, color, |index, value| f(index, sign * value));
-        mobility(board, color, |index| f(index, sign));
-        king_safety(board, color, |index, value| f(index, sign * value));
+        maps[color.index()] = activity(board, color, |index, value| f(index, sign * value));
+        king_shelter(board, color, |index, value| f(index, sign * value));
         pieces(board, color, |index| f(index, sign));
-        threats(board, color, |index, value| f(index, sign * value));
-        let space = space(board, color);
+    }
+    for (color, sign, _) in sides {
+        let (ours, theirs) = (&maps[color.index()], &maps[(!color).index()]);
+        threats(board, color, ours, theirs, |index, value| {
+            f(index, sign * value)
+        });
+        let space = space(board, color, theirs);
         if space > 0 {
             f(SPACE, sign * space);
         }
     }
 }
 
-/// Squares a piece of `color` and kind `kind` attacks, over all such pieces.
-fn attacks_by(board: &Board, color: Color, kind: PieceKind) -> Bitboard {
-    let occupied = board.occupied();
-    let pieces = board.pieces(color, kind);
-    match kind {
-        PieceKind::Pawn => match color {
-            Color::White => pieces.north_east() | pieces.north_west(),
-            Color::Black => pieces.south_east() | pieces.south_west(),
-        },
-        _ => pieces.into_iter().fold(Bitboard::EMPTY, |acc, sq| {
-            acc | match kind {
-                PieceKind::Knight => attacks::knight(sq),
-                PieceKind::Bishop => attacks::bishop(sq, occupied),
-                PieceKind::Rook => attacks::rook(sq, occupied),
-                PieceKind::Queen => attacks::queen(sq, occupied),
-                _ => attacks::king(sq),
-            }
-        }),
+/// The squares each kind of piece of one color attacks.
+#[derive(Clone, Copy, Default)]
+struct AttackMaps([Bitboard; 6]);
+
+impl AttackMaps {
+    fn of(&self, kind: PieceKind) -> Bitboard {
+        self.0[kind.index()]
+    }
+
+    fn all(&self) -> Bitboard {
+        self.0.iter().fold(Bitboard::EMPTY, |acc, &b| acc | b)
+    }
+}
+
+/// Squares the pawns of `color` attack.
+fn pawn_attacks(board: &Board, color: Color) -> Bitboard {
+    let pawns = board.pieces(color, PieceKind::Pawn);
+    match color {
+        Color::White => pawns.north_east() | pawns.north_west(),
+        Color::Black => pawns.south_east() | pawns.south_west(),
     }
 }
 
 /// Squares on files c to f, ranks 2 to 4 counted from the side of `color`, without own pawns and
 /// not attacked by enemy pawns.
-fn space(board: &Board, color: Color) -> i32 {
+fn space(board: &Board, color: Color, theirs: &AttackMaps) -> i32 {
     let files = Bitboard::file(2) | Bitboard::file(3) | Bitboard::file(4) | Bitboard::file(5);
     let ranks = match color {
         Color::White => Bitboard::rank(1) | Bitboard::rank(2) | Bitboard::rank(3),
         Color::Black => Bitboard::rank(4) | Bitboard::rank(5) | Bitboard::rank(6),
     };
-    let safe = !board.pieces(color, PieceKind::Pawn) & !attacks_by(board, !color, PieceKind::Pawn);
+    let safe = !board.pieces(color, PieceKind::Pawn) & !theirs.of(PieceKind::Pawn);
     (files & ranks & safe).count() as i32
 }
 
 /// Enemy pieces other than pawns that pieces of `color` threaten: attacked by a pawn, a rook
 /// or queen attacked by a minor piece, a queen attacked by a rook, and any attacked while
-/// undefended.
-fn threats(board: &Board, color: Color, mut f: impl FnMut(usize, i32)) {
+/// undefended. `ours` and `theirs` are the attacks of `color` and of its opponent.
+fn threats(
+    board: &Board,
+    color: Color,
+    ours: &AttackMaps,
+    theirs: &AttackMaps,
+    mut f: impl FnMut(usize, i32),
+) {
     use PieceKind::*;
     let them = !color;
     let majors = board.pieces(them, Rook) | board.pieces(them, Queen);
     let pieces = majors | board.pieces(them, Knight) | board.pieces(them, Bishop);
-    let ours = |kind| attacks_by(board, color, kind);
-    let attacked = PieceKind::ALL
-        .iter()
-        .fold(Bitboard::EMPTY, |acc, &k| acc | ours(k));
-    let defended = PieceKind::ALL
-        .iter()
-        .fold(Bitboard::EMPTY, |acc, &k| acc | attacks_by(board, them, k));
     for (index, targets) in [
-        (THREAT_BY_PAWN, ours(Pawn) & pieces),
-        (THREAT_BY_MINOR, (ours(Knight) | ours(Bishop)) & majors),
-        (THREAT_BY_ROOK, ours(Rook) & board.pieces(them, Queen)),
-        (HANGING, attacked & pieces & !defended),
+        (THREAT_BY_PAWN, ours.of(Pawn) & pieces),
+        (
+            THREAT_BY_MINOR,
+            (ours.of(Knight) | ours.of(Bishop)) & majors,
+        ),
+        (THREAT_BY_ROOK, ours.of(Rook) & board.pieces(them, Queen)),
+        (HANGING, ours.all() & pieces & !theirs.all()),
     ] {
         if !targets.is_empty() {
             f(index, targets.count() as i32);
@@ -236,21 +247,19 @@ fn pieces(board: &Board, color: Color, mut f: impl FnMut(usize)) {
     }
 }
 
-/// Attacks of `color` on the enemy king zone and the pawn cover of the own king.
-fn king_safety(board: &Board, color: Color, mut f: impl FnMut(usize, i32)) {
+/// Mobility of the knights, bishops, rooks and queens of `color`, one feature per piece, and
+/// their attacks on the enemy king zone; returns the squares each kind of piece of `color`
+/// attacks.
+fn activity(board: &Board, color: Color, mut f: impl FnMut(usize, i32)) -> AttackMaps {
+    let available = !board.color_bb(color) & !pawn_attacks(board, !color);
     let enemy_king = board.king(!color);
     let zone = attacks::king(enemy_king) | enemy_king.bb();
     let occupied = board.occupied();
-    let mut attackers = 0;
-    for (i, kind) in [
-        PieceKind::Knight,
-        PieceKind::Bishop,
-        PieceKind::Rook,
-        PieceKind::Queen,
-    ]
-    .into_iter()
-    .enumerate()
-    {
+    let mut maps = AttackMaps::default();
+    maps.0[PieceKind::Pawn.index()] = pawn_attacks(board, color);
+    maps.0[PieceKind::King.index()] = attacks::king(board.king(color));
+    let (mut offset, mut attackers) = (MOBILITY, 0);
+    for (i, (kind, most)) in MOBILITY_PIECES.into_iter().enumerate() {
         for sq in board.pieces(color, kind) {
             let reachable = match kind {
                 PieceKind::Knight => attacks::knight(sq),
@@ -258,15 +267,22 @@ fn king_safety(board: &Board, color: Color, mut f: impl FnMut(usize, i32)) {
                 PieceKind::Rook => attacks::rook(sq, occupied),
                 _ => attacks::queen(sq, occupied),
             };
+            maps.0[kind.index()] |= reachable;
+            f(offset + (reachable & available).count() as usize, 1);
             let hits = (reachable & zone).count() as i32;
             if hits > 0 {
                 f(KING_ATTACK + i, hits);
                 attackers += 1;
             }
         }
+        offset += most + 1;
     }
     f(KING_ATTACKERS + attackers.min(4), 1);
+    maps
+}
 
+/// The pawn cover of the king of `color`.
+fn king_shelter(board: &Board, color: Color, mut f: impl FnMut(usize, i32)) {
     let king = board.king(color);
     let pawns = board.pieces(color, PieceKind::Pawn);
     let files = Bitboard::file(king.file());
@@ -289,30 +305,6 @@ fn king_safety(board: &Board, color: Color, mut f: impl FnMut(usize, i32)) {
         .count() as i32;
     if open > 0 {
         f(KING_OPEN_FILES, open);
-    }
-}
-
-/// Calls `f(index)` once per knight, bishop, rook and queen of `color`.
-fn mobility(board: &Board, color: Color, mut f: impl FnMut(usize)) {
-    let enemy_pawns = board.pieces(!color, PieceKind::Pawn);
-    let pawn_attacks = match color {
-        Color::White => enemy_pawns.south_east() | enemy_pawns.south_west(),
-        Color::Black => enemy_pawns.north_east() | enemy_pawns.north_west(),
-    };
-    let available = !board.color_bb(color) & !pawn_attacks;
-    let occupied = board.occupied();
-    let mut offset = MOBILITY;
-    for (kind, most) in MOBILITY_PIECES {
-        for sq in board.pieces(color, kind) {
-            let reachable = match kind {
-                PieceKind::Knight => attacks::knight(sq),
-                PieceKind::Bishop => attacks::bishop(sq, occupied),
-                PieceKind::Rook => attacks::rook(sq, occupied),
-                _ => attacks::queen(sq, occupied),
-            };
-            f(offset + (reachable & available).count() as usize);
-        }
-        offset += most + 1;
     }
 }
 
