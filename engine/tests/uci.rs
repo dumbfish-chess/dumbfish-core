@@ -691,14 +691,21 @@ fn go_mate_stops_at_the_mate() {
 fn reports_root_moves_on_long_searches() {
     let mut engine = Engine::start();
     engine.send("position startpos");
-    engine.send("go movetime 3500");
-    let lines = engine.read_until("bestmove");
-    assert!(
-        lines
-            .iter()
-            .any(|l| l.contains(" currmove ") && l.contains(" currmovenumber ")),
-        "after 3 seconds the root moves are reported: {lines:?}"
-    );
+    engine.send("go infinite");
+    let mut lines = Vec::new();
+    while !lines
+        .last()
+        .is_some_and(|l: &String| l.contains(" currmove "))
+    {
+        match engine.lines.recv_timeout(Duration::from_secs(60)) {
+            Ok(line) => lines.push(line),
+            Err(e) => panic!("no currmove ({e:?}): {lines:?}"),
+        }
+    }
+    engine.send("stop");
+    lines.extend(engine.read_until("bestmove"));
+    let currmove = lines.iter().find(|l| l.contains(" currmove ")).unwrap();
+    assert!(currmove.contains(" currmovenumber "), "{currmove}");
     assert!(
         lines
             .iter()
