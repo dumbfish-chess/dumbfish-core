@@ -317,52 +317,72 @@ fn distance(a: Square, b: Square) -> i32 {
     i32::from(a.file().abs_diff(b.file()).max(a.rank().abs_diff(b.rank())))
 }
 
-/// Calls `f(index, value)` once per pawn of `color` and per pawn structure feature it has.
+/// `b` and every square ahead of it on its file, from the side of `color`.
+fn fill_forward(mut b: Bitboard, color: Color) -> Bitboard {
+    for shift in [8, 16, 32] {
+        b.0 |= match color {
+            Color::White => b.0 << shift,
+            Color::Black => b.0 >> shift,
+        };
+    }
+    b
+}
+
+/// The squares strictly ahead of `b` on its file, from the side of `color`.
+fn front_span(b: Bitboard, color: Color) -> Bitboard {
+    match color {
+        Color::White => fill_forward(b.north(), color),
+        Color::Black => fill_forward(b.south(), color),
+    }
+}
+
+/// Calls `f(index, value)` for the pawn structure features of the pawns of `color`; for the
+/// counts of doubled, isolated and backward pawns, and once per passed pawn and feature.
 fn pawn_structure(board: &Board, color: Color, mut f: impl FnMut(usize, i32)) {
     let ours = board.pieces(color, PieceKind::Pawn);
     let theirs = board.pieces(!color, PieceKind::Pawn);
-    for sq in ours {
-        let (file, rank) = (sq.file(), sq.rank());
+    let files = fill_forward(ours, color) | fill_forward(ours, !color);
+    let neighbours = files.east() | files.west();
+    let beside = ours.east() | ours.west();
+    let behind_stop = match color {
+        Color::White => pawn_attacks(board, !color).south(),
+        Color::Black => pawn_attacks(board, !color).north(),
+    };
+
+    let doubled = ours & front_span(ours, !color);
+    let isolated = ours & !neighbours;
+    let backward = ours & neighbours & !fill_forward(beside, color) & behind_stop;
+    let blocked = front_span(theirs | theirs.east() | theirs.west(), !color);
+    for (index, pawns) in [
+        (DOUBLED, doubled),
+        (ISOLATED, isolated),
+        (BACKWARD, backward),
+    ] {
+        if !pawns.is_empty() {
+            f(index, pawns.count() as i32);
+        }
+    }
+
+    for sq in ours & !doubled & !blocked {
         let relative_rank = match color {
-            Color::White => rank,
-            Color::Black => 7 - rank,
+            Color::White => sq.rank(),
+            Color::Black => 7 - sq.rank(),
         };
-        let ahead = Bitboard(match color {
-            Color::White => (!0u64).checked_shl(8 * u32::from(rank + 1)).unwrap_or(0),
-            Color::Black => (1u64 << (8 * rank)) - 1,
-        });
-        let own_file = Bitboard::file(file);
-        let adjacent = own_file.east() | own_file.west();
-
-        let stop = match color {
-            Color::White => Square::new(file, rank + 1),
-            Color::Black => Square::new(file, rank - 1),
-        };
-
-        let doubled = !(ours & own_file & ahead).is_empty();
-        if doubled {
-            f(DOUBLED, 1);
+        f(PASSED + usize::from(relative_rank) - 1, 1);
+        if !(attacks::pawn(!color, sq) & ours).is_empty() {
+            f(PASSED_SUPPORTED, 1);
         }
-        if (ours & adjacent).is_empty() {
-            f(ISOLATED, 1);
-        } else if (ours & adjacent & !ahead).is_empty()
-            && !(attacks::pawn(color, stop) & theirs).is_empty()
-        {
-            f(BACKWARD, 1);
-        }
-        if !doubled && (theirs & (own_file | adjacent) & ahead).is_empty() {
-            f(PASSED + usize::from(relative_rank) - 1, 1);
-            if !(attacks::pawn(!color, sq) & ours).is_empty() {
-                f(PASSED_SUPPORTED, 1);
-            }
-            let scale = i32::from(relative_rank) - 1;
-            if scale > 0 {
-                f(PASSED_OWN_KING, scale * distance(board.king(color), stop));
-                f(
-                    PASSED_ENEMY_KING,
-                    scale * distance(board.king(!color), stop),
-                );
-            }
+        let scale = i32::from(relative_rank) - 1;
+        if scale > 0 {
+            let stop = match color {
+                Color::White => Square::new(sq.file(), sq.rank() + 1),
+                Color::Black => Square::new(sq.file(), sq.rank() - 1),
+            };
+            f(PASSED_OWN_KING, scale * distance(board.king(color), stop));
+            f(
+                PASSED_ENEMY_KING,
+                scale * distance(board.king(!color), stop),
+            );
         }
     }
 }
