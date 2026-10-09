@@ -780,3 +780,47 @@ fn chess960_castling_is_the_king_taking_its_rook() {
     engine.send("go depth 2 searchmoves g1h1");
     assert_eq!(engine.best_move(), "g1h1");
 }
+
+#[test]
+fn limit_strength_by_elo() {
+    use dumbfish::skill::{ELO, MAX_LEVEL};
+    let mut engine = Engine::start();
+    engine.send("uci");
+    let lines = engine.read_until("uciok");
+    let (weakest, strongest) = (ELO[0], ELO[MAX_LEVEL as usize]);
+    for option in [
+        "option name UCI_LimitStrength type check default false".to_string(),
+        format!("option name UCI_Elo type spin default {weakest} min {weakest} max {strongest}"),
+    ] {
+        assert!(lines.contains(&option), "{option}: {lines:?}");
+    }
+    engine.send(&format!("setoption name UCI_Elo value {}", weakest - 1));
+    assert!(
+        engine
+            .read_until("info string")
+            .last()
+            .unwrap()
+            .contains("expected")
+    );
+    engine.send("setoption name UCI_LimitStrength value true");
+    engine.send(&format!("setoption name UCI_Elo value {weakest}"));
+    engine.send("position startpos");
+    engine.send("go depth 20");
+    let lines = engine.read_until("bestmove");
+    let nodes: u64 = lines
+        .iter()
+        .rev()
+        .find_map(|l| {
+            l.split(" nodes ")
+                .nth(1)?
+                .split_whitespace()
+                .next()?
+                .parse()
+                .ok()
+        })
+        .unwrap();
+    assert!(
+        nodes <= 257,
+        "the weakest level searches 256 nodes: {lines:?}"
+    );
+}

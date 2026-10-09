@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::atomic::AtomicBool;
 
 use dumbfish::search::{self, Limits};
-use dumbfish::skill::{MAX_LEVEL, Skill};
+use dumbfish::skill::{ELO, MAX_LEVEL, Skill, level_for_elo, parse_elo};
 use dumbfish::tt::TranspositionTable;
 use dumbfish_core::{Board, Move, MoveKind, Square};
 
@@ -101,4 +101,41 @@ fn weak_levels_still_take_a_hanging_queen() {
             "seed {seed}"
         );
     }
+}
+
+#[test]
+fn elo_table() {
+    let rows = |f: &dyn Fn(i32) -> String| (0..=20).map(f).collect::<String>();
+    let text = rows(&|l| format!("{l} {}\n", 1000 + 50 * l));
+    let table = parse_elo(&format!("# level elo\n\n{text}")).unwrap();
+    assert_eq!(level_for_elo(&table, 0), 0);
+    assert_eq!(
+        level_for_elo(&table, 1024),
+        0,
+        "closer to 1000 than to 1050"
+    );
+    assert_eq!(level_for_elo(&table, 1026), 1);
+    assert_eq!(level_for_elo(&table, 9999), MAX_LEVEL);
+    let ties = parse_elo(&rows(&|l| format!("{l} {}\n", 1000 + 50 * (l / 2)))).unwrap();
+    assert_eq!(
+        level_for_elo(&ties, 1050),
+        2,
+        "levels 2 and 3 tie; the lower one is taken"
+    );
+    for (bad, why) in [
+        (
+            rows(&|l| format!("{} {}\n", l.min(19), 1000 + 50 * l)),
+            "level 19 twice",
+        ),
+        (rows(&|l| format!("{l} {}\n", 1000 - l)), "Elo falls"),
+        (rows(&|l| format!("{l} {} x\n", 1000 + l)), "extra field"),
+        (format!("{text}21 3000\n"), "no level 21"),
+        ("0 1000\n".to_string(), "levels missing"),
+    ] {
+        assert!(parse_elo(&bad).is_err(), "{why}");
+    }
+    assert!(
+        ELO[0] < ELO[MAX_LEVEL as usize],
+        "the shipped table is valid"
+    );
 }

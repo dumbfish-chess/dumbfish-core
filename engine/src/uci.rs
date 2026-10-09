@@ -42,6 +42,8 @@ pub fn run() {
         board: Board::startpos(),
         tt: Some(TranspositionTable::new(tt::DEFAULT_MEGABYTES)),
         skill_level: skill::MAX_LEVEL,
+        limit_strength: false,
+        elo: skill::ELO[0],
         style: PRESETS[0].style,
         threads: 1,
         multipv: 1,
@@ -83,6 +85,11 @@ pub fn run() {
                 println!(
                     "option name Skill Level type spin default {0} min 0 max {0}",
                     skill::MAX_LEVEL
+                );
+                println!("option name UCI_LimitStrength type check default false");
+                let (weakest, strongest) = (skill::ELO[0], skill::ELO[skill::MAX_LEVEL as usize]);
+                println!(
+                    "option name UCI_Elo type spin default {weakest} min {weakest} max {strongest}"
                 );
                 let presets: Vec<_> = PRESETS.iter().map(|p| format!("var {}", p.name)).collect();
                 println!(
@@ -161,6 +168,9 @@ struct Engine {
     /// Moves into the search thread for the duration of a search.
     tt: Option<TranspositionTable>,
     skill_level: u8,
+    /// With `UCI_LimitStrength` the level comes from `UCI_Elo` instead of `Skill Level`.
+    limit_strength: bool,
+    elo: i32,
     /// Set by `Style`; the group options and `Contempt` then override single values.
     style: Style,
     threads: usize,
@@ -240,6 +250,15 @@ impl Engine {
                     skill::MAX_LEVEL
                 )),
             },
+            ("uci_limitstrength", [value @ ("true" | "false")]) => {
+                self.limit_strength = *value == "true";
+                Ok(())
+            }
+            ("uci_elo", _) => {
+                let table = &skill::ELO;
+                self.elo = parse_in(&value, table[0], table[skill::MAX_LEVEL as usize])?;
+                Ok(())
+            }
             ("style", [preset]) => {
                 let preset = PRESETS
                     .iter()
@@ -314,7 +333,10 @@ impl Engine {
             .elapsed()
             .map_or(0, |t| t.as_nanos() as u64);
         limits.skill = Some(Skill {
-            level: self.skill_level,
+            level: match self.limit_strength {
+                true => skill::level_for_elo(&skill::ELO, self.elo),
+                false => self.skill_level,
+            },
             seed,
         });
         limits.style = self.style;
