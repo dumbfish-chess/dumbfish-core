@@ -114,3 +114,8 @@ mkdir -p target/syzygy && cd target/syzygy
 curl -fsSL http://tablebase.sesse.net/syzygy/3-4-5/ | grep -oE 'K[A-Za-z]*v[A-Za-z]*\.rtb[wz]' | sort -u \
   | xargs -I{} curl -fsSO http://tablebase.sesse.net/syzygy/3-4-5/{}
 ```
+
+## Лицензия
+
+GNU General Public License версии 3 или более поздней (`LICENSE`). Чтение таблиц Syzygy (`engine/src/syzygy/`)
+следует формату и устройству кода Stockfish (`src/syzygy/tbprobe.cpp`, GPL-3.0-or-later).
