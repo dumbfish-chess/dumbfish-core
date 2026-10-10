@@ -486,3 +486,6 @@ passed_supported       16          29        5
 passed_own_king       11          -4       -4
 passed_enemy_king        2           0       12
 space             1           1        7
+mop_up_edge       20          20       20
+mop_up_proximity       30          30       30
+mop_up_corner      160         160      160

@@ -28,7 +28,13 @@
 //!   `passed_own_king` and `passed_enemy_king` (distance in king moves from the king to the
 //!   square in front of the pawn, times the pawn's rank counted from its side minus 2);
 //! - `space`: squares on files c to f, ranks 2 to 4 counted from the own side, without own pawns
-//!   and not attacked by enemy pawns.
+//!   and not attacked by enemy pawns;
+//! - mating a bare king, for a side without pawns that has a queen, a rook, bishops on both
+//!   colours or a bishop and a knight: `mop_up_edge` (how far the enemy king is from the centre,
+//!   files plus ranks, 0 ..= 6), `mop_up_proximity` (7 minus the distance between the kings) and,
+//!   with bishops on one colour and no queen or rook, `mop_up_corner` (7 minus the enemy king's
+//!   distance to the nearest corner of that colour). Their weights are set by hand: positions
+//!   for them are too rare to tune.
 
 use std::fmt::Write as _;
 use std::sync::LazyLock;
@@ -74,7 +80,10 @@ const PASSED_SUPPORTED: usize = HANGING + 1;
 const PASSED_OWN_KING: usize = PASSED_SUPPORTED + 1;
 const PASSED_ENEMY_KING: usize = PASSED_OWN_KING + 1;
 const SPACE: usize = PASSED_ENEMY_KING + 1;
-pub const FEATURE_COUNT: usize = SPACE + 1;
+const MOP_UP_EDGE: usize = SPACE + 1;
+const MOP_UP_PROXIMITY: usize = MOP_UP_EDGE + 1;
+const MOP_UP_CORNER: usize = MOP_UP_PROXIMITY + 1;
+pub const FEATURE_COUNT: usize = MOP_UP_CORNER + 1;
 
 /// Index in `style::GROUPS` of the group a feature belongs to.
 pub fn group(index: usize) -> usize {
@@ -84,6 +93,7 @@ pub fn group(index: usize) -> usize {
         THREAT_BY_PAWN..=HANGING => 3,
         PASSED_SUPPORTED..=PASSED_ENEMY_KING => 2,
         SPACE => 1,
+        MOP_UP_EDGE..=MOP_UP_CORNER => 4,
         i if i < PIECE_SQUARE => 0,
         i if i < DOUBLED => 1,
         i if i < MOBILITY => 2,
@@ -128,6 +138,7 @@ pub static FEATURE_NAMES: LazyLock<Vec<String>> = LazyLock::new(|| {
     );
     names.extend(["passed_supported", "passed_own_king", "passed_enemy_king"].map(String::from));
     names.push("space".into());
+    names.extend(["mop_up_edge", "mop_up_proximity", "mop_up_corner"].map(String::from));
     names
 });
 
@@ -156,6 +167,7 @@ pub fn for_each_feature(board: &Board, mut f: impl FnMut(usize, i32)) {
         maps[color.index()] = activity(board, color, |index, value| f(index, sign * value));
         king_shelter(board, color, |index, value| f(index, sign * value));
         pieces(board, color, |index| f(index, sign));
+        mop_up(board, color, |index, value| f(index, sign * value));
     }
     for (color, sign, _) in sides {
         let (ours, theirs) = (&maps[color.index()], &maps[(!color).index()]);
@@ -166,6 +178,41 @@ pub fn for_each_feature(board: &Board, mut f: impl FnMut(usize, i32)) {
         if space > 0 {
             f(SPACE, sign * space);
         }
+    }
+}
+
+/// The features that drive a bare king to mate, see the module documentation.
+fn mop_up(board: &Board, color: Color, mut f: impl FnMut(usize, i32)) {
+    use PieceKind::*;
+    let them = !color;
+    if board.color_bb(them).count() != 1 || !board.pieces(color, Pawn).is_empty() {
+        return;
+    }
+    let light = Bitboard(0x55AA_55AA_55AA_55AA);
+    let bishops = board.pieces(color, Bishop);
+    let (on_light, on_dark) = (
+        !(bishops & light).is_empty(),
+        !(bishops & !light).is_empty(),
+    );
+    let majors = !(board.pieces(color, Queen) | board.pieces(color, Rook)).is_empty();
+    let knights = !board.pieces(color, Knight).is_empty();
+    if !(majors || (on_light && on_dark) || (knights && (on_light || on_dark))) {
+        return;
+    }
+    let (king, enemy) = (board.king(color), board.king(them));
+    let from_centre = |v: u8| i32::from(v.max(7 - v)) - 4;
+    f(
+        MOP_UP_EDGE,
+        from_centre(enemy.file()) + from_centre(enemy.rank()),
+    );
+    f(MOP_UP_PROXIMITY, 7 - distance(king, enemy));
+    if !majors && on_light != on_dark {
+        let corners = match on_light {
+            true => [Square::A8, Square::H1],
+            false => [Square::A1, Square::H8],
+        };
+        let nearest = corners.map(|corner| distance(enemy, corner));
+        f(MOP_UP_CORNER, 7 - nearest[0].min(nearest[1]));
     }
 }
 

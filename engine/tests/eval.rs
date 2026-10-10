@@ -59,7 +59,7 @@ fn feature_names_are_unique() {
     assert_eq!(FEATURE_NAMES[5], "pawn_a1");
     assert_eq!(FEATURE_NAMES[5 + 6 * 64 - 1], "king_h8");
     assert_eq!(FEATURE_NAMES[5 + 6 * 64 + 3 + 5], "passed_7");
-    assert_eq!(FEATURE_NAMES[FEATURE_COUNT - 1], "space");
+    assert_eq!(FEATURE_NAMES[FEATURE_COUNT - 1], "mop_up_corner");
 }
 
 #[test]
@@ -108,7 +108,8 @@ fn features_of_a_position() {
             ("mobility_queen_17", 1),
             ("king_attack_queen", 2),
             ("king_attackers_0", -1),
-            ("king_attackers_1", 1)
+            ("king_attackers_1", 1),
+            ("mop_up_edge", 3)
         ],
         "the kings on e1 and e8 cancel out"
     );
@@ -184,7 +185,8 @@ fn explain_lists_non_zero_features() {
             "mobility_queen_17",
             "king_attack_queen",
             "king_attackers_0",
-            "king_attackers_1"
+            "king_attackers_1",
+            "mop_up_edge"
         ],
         "{text}"
     );
@@ -842,6 +844,58 @@ fn space_matches_reference() {
 }
 
 #[test]
+fn mop_up_examples() {
+    let features = |fen: &str| {
+        let mut values = vec![0; FEATURE_COUNT];
+        for_each_feature(&Board::from_fen(fen).unwrap(), |index, value| {
+            values[index] += value
+        });
+        let mut found: Vec<_> = (0..FEATURE_COUNT)
+            .filter(|&i| values[i] != 0 && FEATURE_NAMES[i].starts_with("mop_up_"))
+            .map(|i| (FEATURE_NAMES[i].as_str(), values[i]))
+            .collect();
+        found.sort();
+        found
+    };
+    assert_eq!(
+        features("8/8/8/4k3/8/8/8/KBN5 w - - 0 1"),
+        [("mop_up_corner", 3), ("mop_up_proximity", 3)],
+        "the king in the centre is 4 moves from a1 and from the light corners a8 and h1"
+    );
+    assert_eq!(
+        features("7k/8/5K2/8/8/8/8/R7 w - - 0 1"),
+        [("mop_up_edge", 6), ("mop_up_proximity", 5)],
+        "a cornered king two moves from ours; no corner to choose with a rook"
+    );
+    assert_eq!(
+        features("8/8/3k4/8/8/3K4/8/b5n1 b - - 0 1"),
+        [
+            ("mop_up_corner", -4),
+            ("mop_up_edge", -1),
+            ("mop_up_proximity", -4)
+        ],
+        "black mates: the dark bishop wants the white king on a1 or h8, 3 moves from d3"
+    );
+    for (fen, why) in [
+        (
+            "8/8/8/4k3/8/8/8/KNN5 w - - 0 1",
+            "two knights cannot force mate",
+        ),
+        ("8/8/8/4k3/8/8/8/KB6 w - - 0 1", "a lone bishop cannot mate"),
+        (
+            "8/8/8/4k3/8/8/P7/KR6 w - - 0 1",
+            "with a pawn the plan is to promote",
+        ),
+        (
+            "8/8/8/4k3/7p/8/8/KR6 w - - 0 1",
+            "the enemy king is not bare",
+        ),
+    ] {
+        assert_eq!(features(fen), [], "{why}");
+    }
+}
+
+#[test]
 fn threat_examples() {
     let board = Board::from_fen("8/5k2/2qpr3/3P4/8/5N2/8/R3K3 w - - 0 1").unwrap();
     assert_eq!(
@@ -866,4 +920,5 @@ fn feature_groups() {
     assert_eq!(group_of("hanging"), "mobility");
     assert_eq!(group_of("passed_own_king"), "pawns");
     assert_eq!(group_of("space"), "positional");
+    assert_eq!(group_of("mop_up_corner"), "king_attack");
 }
