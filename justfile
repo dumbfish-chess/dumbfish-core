@@ -4,7 +4,7 @@ bin := justfile_directory() / "target/play/dumbfish"
 uci ref="newest": (build ref)
     @{{ bin }}
 
-# Build dumbfish from <ref> into target/play/dumbfish, a stable path for a GUI; <ref> is a branch or commit, "newest" the most recently committed branch, "." the working tree
+# Build dumbfish from <ref> into target/play/dumbfish, a stable path for a GUI, with the Syzygy tables of target/syzygy linked next to it; <ref> is a branch or commit, "newest" the most recently committed branch, "." the working tree
 build ref="newest":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -26,5 +26,8 @@ build ref="newest":
         cargo build --release -q -p dumbfish --manifest-path "$src/Cargo.toml" --target-dir "$root/target/play/target"
         cp -f "$root/target/play/target/release/dumbfish" "{{ bin }}"
         built="$ref ($(git -C "$root" log -1 --format='%h %s' "$ref"))"
+    fi
+    if [[ -d $root/target/syzygy ]]; then
+        ln -sfn ../syzygy "$root/target/play/syzygy"
     fi
     echo "built {{ bin }} from $built" >&2

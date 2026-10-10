@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+unset SYZYGY_PATH
 
 usage="usage: scripts/sprt.sh <base-ref> [<dev-ref>] [-- extra fastchess options]
 

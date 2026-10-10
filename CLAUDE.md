@@ -24,7 +24,9 @@ GUI живёт в другом репозитории и общается с д�
   - `perft <depth> [fen]` — perft с разбивкой по ходам из корня (для поиска расхождений с эталонным движком);
   - `wdl <dataset.epd>` — подбор модели выигрыш/ничья/проигрыш для `engine/wdl.txt` по результатам партий.
 - `justfile`: `just uci [ref]` собирает движок из ветки или коммита (по умолчанию — последней изменённой ветки,
-  `.` — рабочее дерево) и запускает UCI в терминале; `just build [ref]` кладёт бинарник в `target/play/dumbfish` для GUI.
+  `.` — рабочее дерево) и запускает UCI в терминале; `just build [ref]` кладёт бинарник в `target/play/dumbfish` для GUI
+  и ссылку `target/play/syzygy` на таблицы: движок сам берёт таблицы из `SYZYGY_PATH` или из каталога `syzygy`
+  рядом с исполняемым файлом.
 - `scripts/sprt.sh <base-ref> [<dev-ref>]` — SPRT `<dev-ref>` (по умолчанию рабочего дерева) против `<base-ref>`
   через fastchess (см. ниже).
 - `scripts/calibrate.sh [<ref>]` — Elo каждого `Skill Level` для `UCI_Elo` (`engine/skill-elo.txt`): каждый уровень

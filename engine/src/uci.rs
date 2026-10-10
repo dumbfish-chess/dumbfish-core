@@ -36,8 +36,23 @@ const MAX_MULTIPV: usize = 256;
 /// The search reports the root move it is on only after this long, not to flood the GUI.
 const CURRMOVE_AFTER: Duration = Duration::from_secs(3);
 
+/// Where the tablebases are unless `SyzygyPath` says otherwise: the `SYZYGY_PATH` environment
+/// variable, or a `syzygy` directory next to the executable.
+fn default_syzygy_path() -> Option<String> {
+    let from_environment = std::env::var("SYZYGY_PATH").ok().filter(|p| !p.is_empty());
+    from_environment.or_else(|| {
+        let dir = std::env::current_exe().ok()?.parent()?.join("syzygy");
+        dir.is_dir().then(|| dir.to_str().map(String::from))?
+    })
+}
+
 /// Reads UCI commands from stdin until `quit` or end of input.
 pub fn run() {
+    let syzygy_path = default_syzygy_path();
+    let tablebases = syzygy_path
+        .as_deref()
+        .map(Tablebases::open)
+        .filter(|tablebases| !tablebases.is_empty());
     let mut engine = Engine {
         board: Board::startpos(),
         tt: Some(TranspositionTable::new(tt::DEFAULT_MEGABYTES)),
@@ -50,7 +65,7 @@ pub fn run() {
         show_wdl: false,
         debug: false,
         chess960: false,
-        tablebases: None,
+        tablebases: tablebases.map(Arc::new),
         stop: Arc::new(AtomicBool::new(false)),
         pondering: Arc::new(AtomicBool::new(false)),
         ponder: None,
@@ -76,7 +91,10 @@ pub fn run() {
                 println!("option name Ponder type check default false");
                 println!("option name UCI_ShowWDL type check default false");
                 println!("option name UCI_Chess960 type check default false");
-                println!("option name SyzygyPath type string default <empty>");
+                println!(
+                    "option name SyzygyPath type string default {}",
+                    syzygy_path.as_deref().unwrap_or("<empty>")
+                );
                 println!(
                     "option name UCI_EngineAbout type string default dumbfish {} by tolstovrob, \
                      a chess engine with a classical evaluation",

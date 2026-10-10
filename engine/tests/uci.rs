@@ -18,7 +18,17 @@ struct Engine {
 
 impl Engine {
     fn start() -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_dumbfish"))
+        Self::start_with_syzygy_path(None)
+    }
+
+    /// Starts the engine with the `SYZYGY_PATH` environment variable set to `path`, or unset.
+    fn start_with_syzygy_path(path: Option<&str>) -> Self {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_dumbfish"));
+        match path {
+            Some(path) => command.env("SYZYGY_PATH", path),
+            None => command.env_remove("SYZYGY_PATH"),
+        };
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -822,5 +832,24 @@ fn limit_strength_by_elo() {
     assert!(
         nodes <= 257,
         "the weakest level searches 256 nodes: {lines:?}"
+    );
+}
+
+#[test]
+fn syzygy_path_defaults_to_the_environment() {
+    let mut engine = Engine::start_with_syzygy_path(Some("/nonexistent/tables"));
+    engine.send("uci");
+    let lines = engine.read_until("uciok");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l == "option name SyzygyPath type string default /nonexistent/tables"),
+        "{lines:?}"
+    );
+    engine.send("position startpos");
+    engine.send("go depth 2");
+    assert!(
+        is_legal(dumbfish_core::board::STARTPOS, &[], &engine.best_move()),
+        "a default path without tables changes nothing"
     );
 }
