@@ -11,8 +11,10 @@ GUI живёт в другом репозитории и общается с д�
   `N nodes M nps` (`N` — сигнатура, одинаковая на любой машине); bench и SPRT однопоточные.
   Веса оценки — `engine/weights.txt`, пресеты стиля — `engine/styles.txt`, модель WDL — `engine/wdl.txt`.
 - `tuner/` (`dumbfish-tuner`) — подбор весов оценки методом Texel:
-  `dumbfish-tuner <dataset.epd> <weights.txt> [epochs] [--freeze=<группа>,...]` переписывает файл весов. Не трогает
-  веса групп из `--freeze` (имена как у групп стиля) и веса признаков, активных менее чем в 0.01 % позиций.
+  `dumbfish-tuner <dataset.epd> <weights.txt> [epochs] [--freeze=<группа>,...] [--holdout=<r>/<n>]` переписывает
+  файл весов. Не трогает веса групп из `--freeze` (имена как у групп стиля) и веса признаков, активных менее чем
+  в 0.01 % позиций. С `--holdout=<r>/<n>` позиции с номерами r, r + n, r + 2n, … в подборе не участвуют, ошибка
+  на них печатается рядом с ошибкой подбора.
   Датасет — `quiet-labeled.v7.epd` (Zurichess, 1.4M позиций с результатами партий):
   ```sh
   mkdir -p target/tuner && curl -fsSL https://bitbucket.org/zurichess/tuner/downloads/quiet-labeled.v7.epd.gz \

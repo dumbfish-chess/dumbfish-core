@@ -108,3 +108,32 @@ fn frozen_groups_keep_their_weights() {
     assert!(log.contains("unknown group \"tempo\""), "{log}");
     assert_eq!(after, initial);
 }
+
+#[test]
+fn held_out_positions_are_not_fitted() {
+    let dataset = "4k3/8/8/8/8/8/P7/4K3 w - - c9 \"1-0\";\n\
+                   4k3/8/8/8/8/8/8/N3K3 w - - c9 \"0-1\";\n\
+                   4k3/8/8/8/8/8/P7/4K3 w - - c9 \"1/2-1/2\";\n\
+                   4k3/8/8/8/8/8/8/N3K3 w - - c9 \"0-1\";\n";
+    let initial = include_str!("../../engine/weights.txt");
+    let (ok, weights, log) = tune("holdout", dataset, initial, &["100", "--holdout=1/2"]);
+    assert!(ok, "{log}");
+    assert!(log.contains("2 positions held out"), "{log}");
+    assert!(
+        log.lines()
+            .any(|l| l.starts_with("final loss") && l.contains(", held out ")),
+        "the loss of the held-out positions is reported: {log}"
+    );
+    let knight = index("knight");
+    assert_eq!(
+        parse_weights(&weights).unwrap()[knight],
+        parse_weights(initial).unwrap()[knight],
+        "the lost games with an extra knight are held out"
+    );
+
+    for bad in ["--holdout=2/2", "--holdout=0/1", "--holdout=3"] {
+        let (ok, after, _) = tune("bad-holdout", dataset, initial, &[bad]);
+        assert!(!ok, "{bad} is rejected");
+        assert_eq!(after, initial);
+    }
+}

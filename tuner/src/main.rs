@@ -9,12 +9,15 @@ use dumbfish_core::Board;
 
 const USAGE: &str =
     "usage: dumbfish-tuner <dataset.epd> <weights.txt> [epochs] [--freeze=<group>,...]
+           [--holdout=<r>/<n>]
 
 Texel tuning: fits the evaluation weights to game results by minimizing the mean squared error
 between each result and sigmoid(K * eval), then rewrites <weights.txt> in place. Weights whose
 feature is active in less than 0.01% of the positions keep their initial value, as do the
 weights of the groups given to --freeze: material, positional, pawns, mobility, king_attack,
 king_defense.
+With --holdout=<r>/<n> the positions number r, r + n, r + 2n, ... (counting from 0) are held out:
+they are not fitted, and their loss is printed next to the loss of the fitted positions.
 A dataset line starts with a FEN (move counters optional) and contains the result as
 \"1-0\", \"0-1\" or \"1/2-1/2\", as in quiet-labeled.epd.";
 
@@ -42,12 +45,26 @@ struct Args {
     epochs: usize,
     /// Indices into `GROUPS`.
     frozen_groups: Vec<usize>,
+    /// `(r, n)`: positions `r`, `r + n`, ... are held out.
+    holdout: Option<(usize, usize)>,
 }
 
 fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
     let mut positional = Vec::new();
     let mut frozen_groups = Vec::new();
+    let mut holdout = None;
     for arg in args {
+        if let Some(value) = arg.strip_prefix("--holdout=") {
+            let parsed = value
+                .split_once('/')
+                .and_then(|(r, n)| Some((r.parse().ok()?, n.parse().ok()?)));
+            holdout = Some(
+                parsed
+                    .filter(|&(r, n): &(usize, usize)| r < n && n >= 2)
+                    .ok_or_else(|| USAGE.to_string())?,
+            );
+            continue;
+        }
         let Some(list) = arg.strip_prefix("--freeze=") else {
             positional.push(arg);
             continue;
@@ -76,6 +93,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
         weights: weights.clone(),
         epochs,
         frozen_groups,
+        holdout,
     })
 }
 
@@ -86,8 +104,11 @@ fn run(args: &Args) -> Result<(), String> {
         .iter()
         .map(|w| w.map(f64::from))
         .collect();
-    let data = Dataset::load(&read(dataset_path)?)?;
+    let (data, held) = Dataset::load(&read(dataset_path)?, args.holdout)?;
     eprintln!("{} positions", data.len());
+    if held.len() > 0 {
+        eprintln!("{} positions held out", held.len());
+    }
 
     let k = fit_k(&data, &weights);
     eprintln!("K = {k:.4}, loss {:.6}", data.loss(&weights, k));
@@ -105,7 +126,7 @@ fn run(args: &Args) -> Result<(), String> {
         "{kept} of {} weights kept: frozen groups or too little data",
         3 * weights.len()
     );
-    tune(&data, &mut weights, &fitted, k, epochs);
+    tune(&data, &held, &mut weights, &fitted, k, epochs);
 
     let rounded = weights
         .iter()
@@ -114,7 +135,11 @@ fn run(args: &Args) -> Result<(), String> {
     fs::write(weights_path, format_weights(&rounded))
         .map_err(|e| format!("{weights_path}: {e}"))?;
     let rounded: Vec<_> = rounded.iter().map(|w| w.map(f64::from)).collect();
-    eprintln!("final loss {:.6}", data.loss(&rounded, k));
+    eprintln!(
+        "final loss {:.6}{}",
+        data.loss(&rounded, k),
+        held_out(&held, &rounded, k)
+    );
     Ok(())
 }
 
@@ -129,17 +154,29 @@ struct Dataset {
 }
 
 impl Dataset {
-    fn load(text: &str) -> Result<Self, String> {
-        let mut data = Dataset {
+    fn new() -> Self {
+        Dataset {
             results: Vec::new(),
             blends: Vec::new(),
             offsets: vec![0],
             features: Vec::new(),
-        };
+        }
+    }
+
+    /// The positions to fit and the held-out ones: with `holdout` of `(r, n)` those number `r`,
+    /// `r + n`, ... counting from 0.
+    fn load(text: &str, holdout: Option<(usize, usize)>) -> Result<(Self, Self), String> {
+        let (mut fitted, mut held) = (Dataset::new(), Dataset::new());
+        let mut position = 0;
         for (number, line) in (1..).zip(text.lines()) {
             if line.trim().is_empty() {
                 continue;
             }
+            let data = match holdout {
+                Some((r, n)) if position % n == r => &mut held,
+                _ => &mut fitted,
+            };
+            position += 1;
             let fen: Vec<_> = line.split_whitespace().take(4).collect();
             let board =
                 Board::from_fen(&fen.join(" ")).map_err(|e| format!("line {number}: {e}"))?;
@@ -157,7 +194,7 @@ impl Dataset {
             });
             data.offsets.push(data.features.len());
         }
-        Ok(data)
+        Ok((fitted, held))
     }
 
     fn len(&self) -> usize {
@@ -218,6 +255,14 @@ impl Dataset {
     }
 }
 
+/// The loss of the held-out positions as a suffix for a log line, empty without such positions.
+fn held_out(held: &Dataset, weights: &[[f64; 3]], k: f64) -> String {
+    if held.len() == 0 {
+        return String::new();
+    }
+    format!(", held out {:.6}", held.loss(weights, k))
+}
+
 /// Expected score for a centipawn evaluation.
 fn sigmoid(eval: f64) -> f64 {
     1.0 / (1.0 + 10f64.powf(-eval / 400.0))
@@ -239,7 +284,14 @@ fn fit_k(data: &Dataset, weights: &[[f64; 3]]) -> f64 {
 }
 
 /// Full-batch Adam with a step of about one centipawn, over the weights marked in `fitted`.
-fn tune(data: &Dataset, weights: &mut [[f64; 3]], fitted: &[[bool; 3]], k: f64, epochs: usize) {
+fn tune(
+    data: &Dataset,
+    held: &Dataset,
+    weights: &mut [[f64; 3]],
+    fitted: &[[bool; 3]],
+    k: f64,
+    epochs: usize,
+) {
     let (beta1, beta2, rate) = (0.9f64, 0.999f64, 1.0);
     let mut m = vec![[0.0; 3]; weights.len()];
     let mut v = vec![[0.0; 3]; weights.len()];
@@ -260,7 +312,11 @@ fn tune(data: &Dataset, weights: &mut [[f64; 3]], fitted: &[[bool; 3]], k: f64, 
             }
         }
         if epoch % 100 == 0 || epoch == epochs {
-            eprintln!("epoch {epoch}: loss {:.6}", data.loss(weights, k));
+            eprintln!(
+                "epoch {epoch}: loss {:.6}{}",
+                data.loss(weights, k),
+                held_out(held, weights, k)
+            );
         }
     }
 }
