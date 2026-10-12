@@ -137,3 +137,72 @@ fn held_out_positions_are_not_fitted() {
         assert_eq!(after, initial);
     }
 }
+
+/// A pawn up wins with queens on the board and draws without them.
+fn pawn_by_phase() -> String {
+    let mut dataset = String::new();
+    for _ in 0..4 {
+        dataset += "3qk3/8/8/8/8/8/P7/3QK3 w - - c9 \"1-0\";\n";
+        dataset += "4k3/8/8/8/8/8/P7/4K3 w - - c9 \"1/2-1/2\";\n";
+    }
+    dataset
+}
+
+#[test]
+fn knots_shape_the_weights() {
+    let initial = include_str!("../../engine/weights.txt");
+    let before = parse_weights(initial).unwrap();
+    let pawn = index("pawn");
+
+    let (ok, weights, log) = tune("line", &pawn_by_phase(), initial, &["300", "--knots=24,0"]);
+    assert!(ok, "{log}");
+    let line = parse_weights(&weights).unwrap();
+    assert_ne!(line[pawn], before[pawn], "the pawn is fitted");
+    assert!(
+        line[pawn][0] > line[pawn][2],
+        "the pawn is worth more with queens on: {:?}",
+        line[pawn]
+    );
+    for (f, row) in line.iter().enumerate() {
+        let halfway = (f64::from(row[0] + row[2]) / 2.0).round() as i32;
+        assert!(
+            *row == before[f] || row[1] == halfway,
+            "{}: the middlegame weight of a fitted feature lies halfway, got {row:?}",
+            FEATURE_NAMES[f]
+        );
+    }
+
+    let (ok, weights, log) = tune("flat", &pawn_by_phase(), initial, &["300", "--knots=12"]);
+    assert!(ok, "{log}");
+    let flat = parse_weights(&weights).unwrap();
+    assert_ne!(flat[pawn], before[pawn], "the pawn is fitted");
+    for (f, row) in flat.iter().enumerate() {
+        assert!(
+            *row == before[f] || (row[0] == row[1] && row[1] == row[2]),
+            "{}: one knot is one weight for every phase, got {row:?}",
+            FEATURE_NAMES[f]
+        );
+    }
+}
+
+#[test]
+fn curves_the_engine_cannot_play_leave_the_file() {
+    let initial = include_str!("../../engine/weights.txt");
+    for curve in [&["--knots=24,16,8,0"][..], &["--knots=24,12,0", "--smooth"]] {
+        let args = [&["50"], curve].concat();
+        let (ok, after, log) = tune("unplayable", &pawn_by_phase(), initial, &args);
+        assert!(ok, "{log}");
+        assert!(log.contains("is not rewritten"), "{log}");
+        assert!(
+            log.lines().any(|l| l.starts_with("final loss")),
+            "the loss is still reported: {log}"
+        );
+        assert_eq!(after, initial, "{curve:?}");
+    }
+
+    for bad in ["--knots=25", "--knots=", "--knots=opening"] {
+        let (ok, after, _) = tune("bad-knots", &pawn_by_phase(), initial, &[bad]);
+        assert!(!ok, "{bad} is rejected");
+        assert_eq!(after, initial);
+    }
+}
